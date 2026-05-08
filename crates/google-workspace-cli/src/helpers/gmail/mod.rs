@@ -32,9 +32,18 @@ pub(super) use crate::error::GwsError;
 pub(super) use crate::executor;
 use crate::output::sanitize_for_terminal;
 pub(super) use anyhow::Context;
+pub(super) use base64::Engine as _;
+/// URL-safe base64 decoder that accepts both padded and unpadded input.
+/// Gmail API returns base64url without `=` padding; this engine handles both forms.
+pub(super) const URL_SAFE_LENIENT: base64::engine::GeneralPurpose =
+    base64::engine::GeneralPurpose::new(
+        &base64::alphabet::URL_SAFE,
+        base64::engine::general_purpose::GeneralPurposeConfig::new()
+            .with_encode_padding(false)
+            .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent),
+    );
 #[cfg(test)]
-pub(super) use base64::engine::general_purpose::URL_SAFE;
-pub(super) use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+pub(super) use base64::engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD};
 pub(super) use clap::{Arg, ArgAction, ArgMatches, Command};
 pub(super) use mail_builder::headers::address::Address as MbAddress;
 pub(super) use serde::Serialize;
@@ -750,8 +759,8 @@ async fn fetch_attachment_data(
         ))
     })?;
 
-    URL_SAFE_NO_PAD
-        .decode(data_str.trim_end_matches('='))
+    URL_SAFE_LENIENT
+        .decode(data_str)
         .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to decode attachment data: {e}")))
 }
 
@@ -842,7 +851,7 @@ struct PayloadContents {
 
 /// Decode a base64url-encoded text body part, returning the string on success.
 fn decode_text_body(data: &str, mime_label: &str) -> Option<String> {
-    match URL_SAFE_NO_PAD.decode(data.trim_end_matches('=')) {
+    match URL_SAFE_LENIENT.decode(data) {
         Ok(decoded) => match String::from_utf8(decoded) {
             Ok(s) => Some(s),
             Err(e) => {
