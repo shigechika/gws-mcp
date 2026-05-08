@@ -33,13 +33,11 @@ pub(super) use crate::executor;
 use crate::output::sanitize_for_terminal;
 pub(super) use anyhow::Context;
 pub(super) use base64::Engine as _;
-/// URL-safe base64 decoder that accepts both padded and unpadded input.
-/// Gmail API returns base64url without `=` padding; this engine handles both forms.
+/// URL-safe base64 decoder accepting both padded and unpadded input (Gmail API omits padding).
 pub(super) const URL_SAFE_LENIENT: base64::engine::GeneralPurpose =
     base64::engine::GeneralPurpose::new(
         &base64::alphabet::URL_SAFE,
         base64::engine::general_purpose::GeneralPurposeConfig::new()
-            .with_encode_padding(false)
             .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent),
     );
 #[cfg(test)]
