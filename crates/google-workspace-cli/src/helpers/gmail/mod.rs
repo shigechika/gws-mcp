@@ -32,7 +32,9 @@ pub(super) use crate::error::GwsError;
 pub(super) use crate::executor;
 use crate::output::sanitize_for_terminal;
 pub(super) use anyhow::Context;
-pub(super) use base64::{engine::general_purpose::URL_SAFE, Engine as _};
+#[cfg(test)]
+pub(super) use base64::engine::general_purpose::URL_SAFE;
+pub(super) use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 pub(super) use clap::{Arg, ArgAction, ArgMatches, Command};
 pub(super) use mail_builder::headers::address::Address as MbAddress;
 pub(super) use serde::Serialize;
@@ -748,8 +750,8 @@ async fn fetch_attachment_data(
         ))
     })?;
 
-    URL_SAFE
-        .decode(data_str)
+    URL_SAFE_NO_PAD
+        .decode(data_str.trim_end_matches('='))
         .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to decode attachment data: {e}")))
 }
 
@@ -840,7 +842,7 @@ struct PayloadContents {
 
 /// Decode a base64url-encoded text body part, returning the string on success.
 fn decode_text_body(data: &str, mime_label: &str) -> Option<String> {
-    match URL_SAFE.decode(data) {
+    match URL_SAFE_NO_PAD.decode(data.trim_end_matches('=')) {
         Ok(decoded) => match String::from_utf8(decoded) {
             Ok(s) => Some(s),
             Err(e) => {
@@ -3476,6 +3478,28 @@ mod tests {
 
     fn base64url(s: &str) -> String {
         URL_SAFE.encode(s)
+    }
+
+    fn base64url_no_pad(s: &str) -> String {
+        URL_SAFE_NO_PAD.encode(s)
+    }
+
+    #[test]
+    fn test_extract_payload_contents_unpadded_base64() {
+        // Gmail API returns base64url without padding; ensure we decode it correctly.
+        let text_data = base64url_no_pad("Hello plain text");
+        let html_data = base64url_no_pad("<p>Hello HTML</p>");
+        assert!(!text_data.ends_with('='), "test data must be unpadded");
+        let payload = json!({
+            "mimeType": "multipart/alternative",
+            "parts": [
+                { "mimeType": "text/plain", "body": { "data": text_data, "size": 16 } },
+                { "mimeType": "text/html", "body": { "data": html_data, "size": 18 } },
+            ]
+        });
+        let contents = extract_payload_contents(&payload);
+        assert_eq!(contents.body_text.as_deref(), Some("Hello plain text"));
+        assert_eq!(contents.body_html.as_deref(), Some("<p>Hello HTML</p>"));
     }
 
     #[test]
