@@ -94,4 +94,5 @@ assets = [["target/release/gws", "usr/bin/gws", "755"]]
 name = "gws-mcp"
 license = "Apache-2.0"
 description = "Google Workspace CLI with MCP server support"
+requires = { ca-certificates = "*" }
 assets = [{ source = "target/release/gws", dest = "/usr/bin/gws", mode = "755" }]

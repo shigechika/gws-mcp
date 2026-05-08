@@ -107,7 +107,7 @@ jobs:
       - name: Generate .deb
         if: runner.os == 'Linux'
         run: |
-          cargo install cargo-deb
+          cargo install cargo-deb@3.7.0
           cargo deb --no-build --no-strip --target ${{ matrix.target }} \
             -p google-workspace-cli
           DEB=$(ls target/${{ matrix.target }}/debian/*.deb)
@@ -117,7 +117,7 @@ jobs:
       - name: Generate .rpm
         if: runner.os == 'Linux'
         run: |
-          cargo install cargo-generate-rpm
+          cargo install cargo-generate-rpm@0.21.0
           cargo generate-rpm --target ${{ matrix.target }} \
             -p google-workspace-cli
           RPM=$(ls target/${{ matrix.target }}/generate-rpm/*.rpm)
