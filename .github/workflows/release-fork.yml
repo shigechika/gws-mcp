@@ -107,7 +107,7 @@ jobs:
       - name: Generate .deb
         if: runner.os == 'Linux'
         run: |
-          cargo install cargo-deb --locked
+          cargo install cargo-deb
           cargo deb --no-build --no-strip --target ${{ matrix.target }} \
             -p google-workspace-cli
           DEB=$(ls target/${{ matrix.target }}/debian/*.deb)
@@ -117,9 +117,9 @@ jobs:
       - name: Generate .rpm
         if: runner.os == 'Linux'
         run: |
-          cargo install cargo-generate-rpm --locked
+          cargo install cargo-generate-rpm
           cargo generate-rpm --target ${{ matrix.target }} \
-            -p crates/google-workspace-cli
+            -p google-workspace-cli
           RPM=$(ls target/${{ matrix.target }}/generate-rpm/*.rpm)
           cp "$RPM" "gws-${{ matrix.target }}.rpm"
           sha256sum "gws-${{ matrix.target }}.rpm" > "gws-${{ matrix.target }}.rpm.sha256"
@@ -163,12 +163,12 @@ jobs:
 
           ### Debian / Ubuntu (.deb)
           ```bash
-          sudo dpkg -i gws-mcp_VERSION_amd64.deb
+          sudo dpkg -i gws-mcp_<VERSION>_amd64.deb
           ```
 
           ### RHEL / Fedora / Amazon Linux (.rpm)
           ```bash
-          sudo rpm -i gws-mcp-VERSION-1.x86_64.rpm
+          sudo rpm -i gws-mcp-<VERSION>-1.x86_64.rpm
           ```
 
           ### Windows
