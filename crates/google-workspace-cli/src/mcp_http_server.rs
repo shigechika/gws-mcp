@@ -64,7 +64,14 @@ impl ServerHandler for GwsMcpHandler {
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
             let tools: Vec<Tool> = values
                 .into_iter()
-                .filter_map(|v| serde_json::from_value(v).ok())
+                .filter_map(|v| {
+                    serde_json::from_value(v.clone())
+                        .map_err(|e| {
+                            let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+                            eprintln!("[gws mcp] Warning: skipping tool '{name}': {e}");
+                        })
+                        .ok()
+                })
                 .collect();
             *cache = Some(tools);
         }
@@ -90,9 +97,23 @@ impl ServerHandler for GwsMcpHandler {
     }
 }
 
-pub(crate) async fn start_http(config: ServerConfig, port: u16) -> Result<(), GwsError> {
+pub(crate) async fn start_http(
+    config: ServerConfig,
+    port: u16,
+    bind: String,
+) -> Result<(), GwsError> {
     let config = Arc::new(config);
     let tools_cache: Arc<Mutex<Option<Vec<Tool>>>> = Arc::new(Mutex::new(None));
+
+    // rmcp default allowed_hosts already restricts to localhost/127.0.0.1/::1.
+    // For external bind addresses the caller must use --bind 0.0.0.0 explicitly,
+    // so we widen allowed_hosts only when the bind address is not loopback.
+    let loopback = matches!(bind.as_str(), "127.0.0.1" | "::1" | "localhost");
+    let http_config = if loopback {
+        StreamableHttpServerConfig::default()
+    } else {
+        StreamableHttpServerConfig::default().disable_allowed_hosts()
+    };
 
     let service: StreamableHttpService<GwsMcpHandler, LocalSessionManager> = {
         let config = config.clone();
@@ -105,13 +126,16 @@ pub(crate) async fn start_http(config: ServerConfig, port: u16) -> Result<(), Gw
                 })
             },
             Default::default(),
-            StreamableHttpServerConfig::default(),
+            http_config,
         )
     };
 
     let app = axum::Router::new().nest_service("/mcp", service);
-    let addr = format!("0.0.0.0:{port}");
-    eprintln!("[gws mcp] HTTP server listening on http://localhost:{port}/mcp");
+    let addr = format!("{bind}:{port}");
+    eprintln!("[gws mcp] HTTP server listening on http://{bind}:{port}/mcp");
+    if !loopback {
+        eprintln!("[gws mcp] Warning: server is accessible from external hosts (--bind {bind})");
+    }
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await

@@ -56,6 +56,12 @@ fn build_mcp_cli() -> Command {
                 .help("Port to listen on (HTTP transport only)"),
         )
         .arg(
+            Arg::new("bind")
+                .long("bind")
+                .default_value("127.0.0.1")
+                .help("Address to bind (HTTP transport only). Use 0.0.0.0 to allow external access"),
+        )
+        .arg(
             Arg::new("services")
                 .long("services")
                 .short('s')
@@ -129,7 +135,12 @@ pub async fn start(args: &[String]) -> Result<(), GwsError> {
 
     if transport == "http" {
         let port = *matches.get_one::<u16>("port").unwrap_or(&3000);
-        return crate::mcp_http_server::start_http(config, port).await;
+        let bind = matches
+            .get_one::<String>("bind")
+            .map(|s| s.as_str())
+            .unwrap_or("127.0.0.1")
+            .to_string();
+        return crate::mcp_http_server::start_http(config, port, bind).await;
     }
 
     let mut stdin = BufReader::new(tokio::io::stdin()).lines();
