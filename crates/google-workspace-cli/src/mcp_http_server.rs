@@ -196,12 +196,12 @@ fn urlencode(s: &str) -> String {
 
 /// Returns the public base URL of the server (uses `localhost` even when bound to `0.0.0.0`).
 fn server_base(port: u16, bind: &str) -> String {
-    let host = match bind {
-        "0.0.0.0" => "localhost",
-        "::" => "::1",
-        other => other,
-    };
-    format!("http://{host}:{port}")
+    match bind {
+        "0.0.0.0" => format!("http://localhost:{port}"),
+        "::" => format!("http://[::1]:{port}"),
+        other if other.contains(':') => format!("http://[{other}]:{port}"),
+        other => format!("http://{other}:{port}"),
+    }
 }
 
 fn build_google_auth_url(
@@ -337,6 +337,7 @@ struct AuthorizeParams {
     state: String,
     code_challenge: String,
     code_challenge_method: String,
+    #[allow(dead_code)] // accepted but not forwarded to Google; scope is fixed to openid email profile
     scope: Option<String>,
 }
 
@@ -356,6 +357,17 @@ async fn oauth_authorize(
             "only S256 code_challenge_method is supported".to_string(),
         ));
     }
+    // Restrict redirect_uri to loopback origins to prevent open-redirector abuse.
+    // MCP clients run locally, so http://localhost:* and http://127.0.0.1:* suffice.
+    if !p.redirect_uri.starts_with("http://localhost:")
+        && !p.redirect_uri.starts_with("http://127.0.0.1:")
+        && !p.redirect_uri.starts_with("http://[::1]:")
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "redirect_uri must be a loopback address (http://localhost:*, http://127.0.0.1:*, http://[::1]:*)".to_string(),
+        ));
+    }
 
     state.auth_store.pending.lock().await.insert(
         p.state.clone(),
@@ -368,12 +380,15 @@ async fn oauth_authorize(
     );
 
     let callback = format!("{}/oauth/callback", server_base(state.port, &state.bind));
-    // Request openid/email/profile from Google to identify the user.
-    // GWS API scopes are not needed here because Phase 2+3 still uses the
-    // shared credential from `gws auth login`.  Per-user GWS tokens are Phase 4.
-    let scopes = p.scope.as_deref().unwrap_or("openid email profile");
-    let google_url =
-        build_google_auth_url(&state.oauth_cfg.client_id, &callback, scopes, &p.state);
+    // Always use only openid/email/profile — Phase 2+3 needs only the user's
+    // email for identity.  Forwarding the client's scope would let a malicious
+    // client request arbitrary Google scopes.  Per-user GWS scopes are Phase 4.
+    let google_url = build_google_auth_url(
+        &state.oauth_cfg.client_id,
+        &callback,
+        "openid email profile",
+        &p.state,
+    );
 
     Ok(Redirect::to(&google_url))
 }
@@ -497,13 +512,21 @@ async fn oauth_token(
     }
 
     let bearer = Uuid::new_v4().to_string();
-    state.auth_store.sessions.lock().await.insert(
-        bearer.clone(),
-        UserSession {
-            email: pending_code.email.clone(),
-            created_at: SystemTime::now(),
-        },
-    );
+    {
+        let mut sessions = state.auth_store.sessions.lock().await;
+        // Evict expired sessions when the map grows large to prevent unbounded memory use.
+        const EVICT_THRESHOLD: usize = 256;
+        if sessions.len() >= EVICT_THRESHOLD {
+            sessions.retain(|_, s| !is_expired(s.created_at, SESSION_TTL));
+        }
+        sessions.insert(
+            bearer.clone(),
+            UserSession {
+                email: pending_code.email.clone(),
+                created_at: SystemTime::now(),
+            },
+        );
+    }
 
     eprintln!("[gws mcp] Session created for {}", pending_code.email);
 
@@ -680,5 +703,13 @@ mod tests {
     fn pkce_s256_rejects_wrong_verifier() {
         let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
         assert!(!verify_pkce_s256("wrong-verifier", challenge));
+    }
+
+    #[test]
+    fn server_base_ipv6_brackets() {
+        assert_eq!(server_base(3000, "::"), "http://[::1]:3000");
+        assert_eq!(server_base(3000, "::1"), "http://[::1]:3000");
+        assert_eq!(server_base(3000, "0.0.0.0"), "http://localhost:3000");
+        assert_eq!(server_base(3000, "127.0.0.1"), "http://127.0.0.1:3000");
     }
 }
