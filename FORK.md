@@ -51,9 +51,9 @@ No Rust toolchain required. Binaries are pre-built for macOS (Apple Silicon / In
 ### Debian / Ubuntu (.deb)
 
 ```bash
-sudo dpkg -i gws-mcp_<VERSION>_amd64.deb
+sudo dpkg -i gws-mcp_<VERSION>-1_amd64.deb
 # or for arm64:
-sudo dpkg -i gws-mcp_<VERSION>_arm64.deb
+sudo dpkg -i gws-mcp_<VERSION>-1_arm64.deb
 ```
 
 Download the `.deb` file from the [latest release](https://github.com/shigechika/gws-mcp/releases/latest).
