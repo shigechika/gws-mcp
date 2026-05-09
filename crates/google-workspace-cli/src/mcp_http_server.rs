@@ -204,12 +204,7 @@ fn server_base(port: u16, bind: &str) -> String {
     }
 }
 
-fn build_google_auth_url(
-    client_id: &str,
-    redirect_uri: &str,
-    scopes: &str,
-    state: &str,
-) -> String {
+fn build_google_auth_url(client_id: &str, redirect_uri: &str, scopes: &str, state: &str) -> String {
     format!(
         "https://accounts.google.com/o/oauth2/auth?\
          scope={}&access_type=offline&redirect_uri={}&\
@@ -337,7 +332,8 @@ struct AuthorizeParams {
     state: String,
     code_challenge: String,
     code_challenge_method: String,
-    #[allow(dead_code)] // accepted but not forwarded to Google; scope is fixed to openid email profile
+    #[allow(dead_code)]
+    // accepted but not forwarded to Google; scope is fixed to openid email profile
     scope: Option<String>,
 }
 
@@ -420,14 +416,18 @@ async fn oauth_callback(
         let mut lock = state.auth_store.pending.lock().await;
         lock.remove(&p.state)
             .filter(|pa| !is_expired(pa.created_at, PENDING_TTL))
-            .ok_or_else(|| (StatusCode::BAD_REQUEST, "invalid or expired state".to_string()))?
+            .ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "invalid or expired state".to_string(),
+                )
+            })?
     };
 
     let callback = format!("{}/oauth/callback", server_base(state.port, &state.bind));
-    let token_resp =
-        exchange_google_code(&state.oauth_cfg, &google_code, &callback)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let token_resp = exchange_google_code(&state.oauth_cfg, &google_code, &callback)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let email = get_google_email(&token_resp.access_token)
         .await
@@ -498,7 +498,9 @@ async fn oauth_token(
         if *uri != pending_code.client_redirect_uri {
             return Err((
                 StatusCode::BAD_REQUEST,
-                Json(json!({"error": "invalid_grant", "error_description": "redirect_uri mismatch"})),
+                Json(
+                    json!({"error": "invalid_grant", "error_description": "redirect_uri mismatch"}),
+                ),
             ));
         }
     }
@@ -507,7 +509,9 @@ async fn oauth_token(
     if !verify_pkce_s256(&req.code_verifier, &pending_code.code_challenge) {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": "invalid_grant", "error_description": "PKCE verification failed"})),
+            Json(
+                json!({"error": "invalid_grant", "error_description": "PKCE verification failed"}),
+            ),
         ));
     }
 
