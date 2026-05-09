@@ -176,7 +176,7 @@ The server exposes these OAuth2 endpoints:
 
 All requests to `/mcp` require a valid `Authorization: Bearer <token>` header. Sessions expire after 8 hours.
 
-> **Note:** In Phase 2/3 (current), GWS API calls still use the shared `gws auth login` token. Bearer tokens identify the user (email) but do not yet carry per-user GWS credentials. Per-user token isolation is planned for Phase 4.
+Each authenticated user's MCP tool calls use their own Google access token obtained during the OAuth flow — GWS scopes are derived from the configured service list (e.g. `-s gmail -s drive`) at authorize time. The shared `gws auth login` credential is used only as a fallback when `--auth` is disabled.
 
 ## Upstream MCP issues addressed in this fork
 

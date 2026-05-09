@@ -879,6 +879,34 @@ fn filter_redundant_restrictive_scopes(scopes: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// Return the GWS OAuth scopes needed to cover the given services.
+///
+/// Uses [`DEFAULT_SCOPES`] as the candidate set and filters to only scopes
+/// relevant to the requested services. Always prepends the OpenID Connect
+/// identity scopes. Returns all DEFAULT_SCOPES when `services` is empty.
+pub(crate) fn gws_scopes_for_services(services: &[String]) -> Vec<String> {
+    let mut scopes: Vec<String> = vec![
+        "openid".to_string(),
+        "email".to_string(),
+        "profile".to_string(),
+    ];
+    let filter: std::collections::HashSet<String> = services.iter().cloned().collect();
+    let gws = filter_scopes_by_services(
+        DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
+        if filter.is_empty() {
+            None
+        } else {
+            Some(&filter)
+        },
+    );
+    for s in gws {
+        if !scopes.contains(&s) {
+            scopes.push(s);
+        }
+    }
+    scopes
+}
+
 /// Filter a list of scope URLs to only those matching the given services.
 /// If no filter is provided, returns all scopes unchanged.
 fn filter_scopes_by_services(
