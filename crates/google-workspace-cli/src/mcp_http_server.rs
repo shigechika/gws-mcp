@@ -273,7 +273,7 @@ fn resolve_base_url(public_url: Option<&str>, port: u16, bind: &str) -> Result<S
 
     if parsed.scheme() == "http" {
         let host = parsed.host_str().unwrap_or("");
-        let is_loopback = matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1");
+        let is_loopback = matches!(host, "localhost" | "127.0.0.1" | "::1");
         if !is_loopback {
             eprintln!(
                 "[gws mcp] Warning: --public-url uses plain http:// with a non-loopback host. \
@@ -846,6 +846,13 @@ pub(crate) async fn start_http(
 
     let base_url = resolve_base_url(public_url.as_deref(), port, &bind)?;
 
+    if public_url.is_some() && !enable_auth {
+        eprintln!(
+            "[gws mcp] Warning: --public-url has no effect without --auth \
+             (OAuth2 metadata endpoints are only mounted when --auth is enabled)"
+        );
+    }
+
     let app = if enable_auth {
         let oauth_cfg = load_client_config().map_err(|e| {
             GwsError::Other(anyhow::anyhow!(
@@ -954,5 +961,13 @@ mod tests {
         assert!(
             resolve_base_url(Some("https://example.com/gws#section"), 3000, "127.0.0.1").is_err()
         );
+    }
+
+    #[test]
+    fn resolve_base_url_http_non_loopback_warns_but_succeeds() {
+        // Non-loopback http:// emits a warning but returns Ok (not an error).
+        let result = resolve_base_url(Some("http://example.com/gws"), 3000, "127.0.0.1");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "http://example.com/gws");
     }
 }
