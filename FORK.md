@@ -186,6 +186,30 @@ Each authenticated user's MCP tool calls use their own Google access token obtai
 > - GWS scopes are derived from [`DEFAULT_SCOPES`](crates/google-workspace-cli/src/auth_commands.rs) only. Services whose scopes fall outside that static list (e.g. `admin`, `script`) will not have their specific scopes requested at authorize time; API calls for those services may fail with permission errors.
 > Both limitations are planned for a future release.
 
+### Reverse proxy deployment (`--public-url`)
+
+When `gws mcp` runs behind a reverse proxy (e.g. Caddy, nginx) with TLS termination, use `--public-url` to override the base URL advertised in RFC 9728 / RFC 8414 OAuth2 metadata:
+
+```bash
+gws mcp -s gmail,drive,calendar --helpers \
+    --transport http --port 3000 --bind 127.0.0.1 --auth \
+    --public-url https://mcp.example.com/gws
+```
+
+Example Caddy configuration (strips `/gws` prefix before forwarding):
+
+```
+mcp.example.com {
+    handle_path /gws/* {
+        reverse_proxy localhost:3000
+    }
+}
+```
+
+Register `https://mcp.example.com/gws/oauth/callback` as an **Authorized redirect URI** in [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
+
+The `--public-url` value must not include `/mcp` or `/oauth` paths — those are appended automatically. Trailing slashes are ignored.
+
 ## Upstream MCP issues addressed in this fork
 
 Bug reports and feature requests that targeted upstream's MCP server (closed when MCP was removed). This fork ports the fixes so they remain useful:

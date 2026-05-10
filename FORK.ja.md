@@ -186,6 +186,30 @@ gws mcp -s gmail,drive,calendar --helpers --transport http --port 3000 --auth
 > - GWS スコープは [`DEFAULT_SCOPES`](crates/google-workspace-cli/src/auth_commands.rs) のみから導出されます。このリスト外のサービス（例: `admin`、`script`）は認可時に固有のスコープがリクエストされず、API 呼び出しが権限エラーになる場合があります。
 > いずれも将来のリリースで対応予定です。
 
+### リバースプロキシ経由での公開（`--public-url`）
+
+Caddy や nginx で TLS 終端を行うリバースプロキシ経由で `gws mcp` を公開する場合は、`--public-url` で RFC 9728 / RFC 8414 の OAuth2 メタデータに広告するベース URL を上書きします:
+
+```bash
+gws mcp -s gmail,drive,calendar --helpers \
+    --transport http --port 3000 --bind 127.0.0.1 --auth \
+    --public-url https://mcp.example.com/gws
+```
+
+Caddy 設定例（`/gws` プレフィックスを除去して転送）:
+
+```
+mcp.example.com {
+    handle_path /gws/* {
+        reverse_proxy localhost:3000
+    }
+}
+```
+
+[Google Cloud Console](https://console.cloud.google.com/apis/credentials) で `https://mcp.example.com/gws/oauth/callback` を**承認済みリダイレクト URI** に追加してください。
+
+`--public-url` には `/mcp` や `/oauth` パスを含めないでください — これらのパスは自動的に付加されます。末尾のスラッシュは無視されます。
+
 ## このフォークで対応した upstream の MCP issue
 
 upstream の MCP サーバーに対するバグ報告・機能要望（MCP 削除に伴い close されたもの）を、このフォークで移植・対応しています。

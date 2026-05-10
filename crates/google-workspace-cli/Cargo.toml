@@ -60,6 +60,7 @@ mail-builder = "0.4"
 async-trait = "0.1.89"
 toml = "0.8"
 percent-encoding = "2.3.2"
+url = "2"
 zeroize = { version = "1.8.2", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

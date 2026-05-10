@@ -56,6 +56,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
+use url::Url;
 use uuid::Uuid;
 
 use crate::{
@@ -194,8 +195,9 @@ struct AppState {
     user_tokens: Arc<Mutex<HashMap<String, UserGwsToken>>>,
     /// Configured services — used to derive GWS scopes at authorize time.
     services: Vec<String>,
-    port: u16,
-    bind: String,
+    /// Public base URL used in RFC 9728 / RFC 8414 metadata and Google callback URI.
+    /// Set by `--public-url`; falls back to `server_base(port, bind)` for local use.
+    base_url: String,
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -233,6 +235,54 @@ fn server_base(port: u16, bind: &str) -> String {
         other if other.contains(':') => format!("http://[{other}]:{port}"),
         other => format!("http://{other}:{port}"),
     }
+}
+
+/// Resolves the public base URL from `--public-url` or falls back to `server_base()`.
+///
+/// Validates that the URL has an http/https scheme, no query or fragment, and
+/// strips a trailing slash. Warns (but does not reject) plain `http://` with a
+/// non-loopback host, since RFC 9728 §3.1 recommends HTTPS for public deployments.
+fn resolve_base_url(public_url: Option<&str>, port: u16, bind: &str) -> Result<String, GwsError> {
+    let Some(raw) = public_url else {
+        return Ok(server_base(port, bind));
+    };
+
+    let parsed = Url::parse(raw)
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("--public-url is not a valid URL: {e}")))?;
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        s => {
+            return Err(GwsError::Other(anyhow::anyhow!(
+                "--public-url scheme must be http or https, got: {s}"
+            )));
+        }
+    }
+    if parsed.query().is_some() {
+        return Err(GwsError::Other(anyhow::anyhow!(
+            "--public-url must not contain a query string (RFC 8414 §2)"
+        )));
+    }
+    if parsed.fragment().is_some() {
+        return Err(GwsError::Other(anyhow::anyhow!(
+            "--public-url must not contain a fragment"
+        )));
+    }
+
+    let base = raw.trim_end_matches('/').to_string();
+
+    if parsed.scheme() == "http" {
+        let host = parsed.host_str().unwrap_or("");
+        let is_loopback = matches!(host, "localhost" | "127.0.0.1" | "::1");
+        if !is_loopback {
+            eprintln!(
+                "[gws mcp] Warning: --public-url uses plain http:// with a non-loopback host. \
+                 RFC 9728 §3.1 recommends HTTPS for public deployments."
+            );
+        }
+    }
+
+    Ok(base)
 }
 
 fn build_google_auth_url(client_id: &str, redirect_uri: &str, scopes: &str, state: &str) -> String {
@@ -365,7 +415,7 @@ async fn get_or_refresh_user_token(state: &AppState, email: &str) -> anyhow::Res
 
 /// RFC 9728 — OAuth 2.0 Protected Resource Metadata
 async fn protected_resource_metadata(State(state): State<AppState>) -> Json<Value> {
-    let base = server_base(state.port, &state.bind);
+    let base = &state.base_url;
     Json(json!({
         "resource": base,
         "authorization_servers": [base],
@@ -376,7 +426,7 @@ async fn protected_resource_metadata(State(state): State<AppState>) -> Json<Valu
 
 /// RFC 8414 — OAuth 2.0 Authorization Server Metadata
 async fn authorization_server_metadata(State(state): State<AppState>) -> Json<Value> {
-    let base = server_base(state.port, &state.bind);
+    let base = &state.base_url;
     Json(json!({
         "issuer": base,
         "authorization_endpoint": format!("{base}/oauth/authorize"),
@@ -471,7 +521,7 @@ async fn oauth_authorize(
         },
     );
 
-    let callback = format!("{}/oauth/callback", server_base(state.port, &state.bind));
+    let callback = format!("{}/oauth/callback", state.base_url);
     // Derive GWS scopes from the configured service list (e.g. gmail, drive).
     // The client's requested scope is ignored — only the server-side service list
     // is trusted, preventing malicious clients from requesting arbitrary Google scopes.
@@ -517,7 +567,7 @@ async fn oauth_callback(
             })?
     };
 
-    let callback = format!("{}/oauth/callback", server_base(state.port, &state.bind));
+    let callback = format!("{}/oauth/callback", state.base_url);
     let token_resp = exchange_google_code(&state.oauth_cfg, &google_code, &callback)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -767,6 +817,7 @@ pub(crate) async fn start_http(
     port: u16,
     bind: String,
     enable_auth: bool,
+    public_url: Option<String>,
 ) -> Result<(), GwsError> {
     let config = Arc::new(config);
     let tools_cache: Arc<Mutex<Option<Vec<Tool>>>> = Arc::new(Mutex::new(None));
@@ -793,6 +844,15 @@ pub(crate) async fn start_http(
         )
     };
 
+    let base_url = resolve_base_url(public_url.as_deref(), port, &bind)?;
+
+    if public_url.is_some() && !enable_auth {
+        eprintln!(
+            "[gws mcp] Warning: --public-url has no effect without --auth \
+             (OAuth2 metadata endpoints are only mounted when --auth is enabled)"
+        );
+    }
+
     let app = if enable_auth {
         let oauth_cfg = load_client_config().map_err(|e| {
             GwsError::Other(anyhow::anyhow!(
@@ -804,8 +864,7 @@ pub(crate) async fn start_http(
             oauth_cfg: Arc::new(oauth_cfg),
             user_tokens: Arc::new(Mutex::new(HashMap::new())),
             services: config.services_list().to_vec(),
-            port,
-            bind: bind.clone(),
+            base_url: base_url.clone(),
         };
         build_auth_router(mcp_service, app_state)
     } else {
@@ -813,12 +872,11 @@ pub(crate) async fn start_http(
     };
 
     let addr = format!("{bind}:{port}");
-    let base = server_base(port, &bind);
-    eprintln!("[gws mcp] HTTP server listening on {base}/mcp");
+    eprintln!("[gws mcp] HTTP server listening on {base_url}/mcp");
     if enable_auth {
-        eprintln!("[gws mcp] OAuth2 auth enabled — callback URL: {base}/oauth/callback");
+        eprintln!("[gws mcp] OAuth2 auth enabled — callback URL: {base_url}/oauth/callback");
         eprintln!(
-            "[gws mcp] Ensure {base}/oauth/callback is registered as a redirect URI in Google Cloud Console"
+            "[gws mcp] Ensure {base_url}/oauth/callback is registered as a redirect URI in Google Cloud Console"
         );
     }
     if !loopback {
@@ -860,5 +918,56 @@ mod tests {
         assert_eq!(server_base(3000, "::1"), "http://localhost:3000");
         assert_eq!(server_base(3000, "0.0.0.0"), "http://localhost:3000");
         assert_eq!(server_base(3000, "127.0.0.1"), "http://localhost:3000");
+    }
+
+    #[test]
+    fn resolve_base_url_none_falls_back_to_localhost() {
+        let url = resolve_base_url(None, 3000, "127.0.0.1").unwrap();
+        assert_eq!(url, "http://localhost:3000");
+    }
+
+    #[test]
+    fn resolve_base_url_explicit_https() {
+        let url = resolve_base_url(Some("https://mcp.example.com/gws"), 3000, "127.0.0.1").unwrap();
+        assert_eq!(url, "https://mcp.example.com/gws");
+    }
+
+    #[test]
+    fn resolve_base_url_strips_trailing_slash() {
+        let url =
+            resolve_base_url(Some("https://mcp.example.com/gws/"), 3000, "127.0.0.1").unwrap();
+        assert_eq!(url, "https://mcp.example.com/gws");
+    }
+
+    #[test]
+    fn resolve_base_url_rejects_invalid_url() {
+        assert!(resolve_base_url(Some("not a url"), 3000, "127.0.0.1").is_err());
+    }
+
+    #[test]
+    fn resolve_base_url_rejects_non_http_scheme() {
+        assert!(resolve_base_url(Some("ftp://example.com"), 3000, "127.0.0.1").is_err());
+    }
+
+    #[test]
+    fn resolve_base_url_rejects_query_string() {
+        assert!(
+            resolve_base_url(Some("https://example.com/gws?foo=bar"), 3000, "127.0.0.1").is_err()
+        );
+    }
+
+    #[test]
+    fn resolve_base_url_rejects_fragment() {
+        assert!(
+            resolve_base_url(Some("https://example.com/gws#section"), 3000, "127.0.0.1").is_err()
+        );
+    }
+
+    #[test]
+    fn resolve_base_url_http_non_loopback_warns_but_succeeds() {
+        // Non-loopback http:// emits a warning but returns Ok (not an error).
+        let result = resolve_base_url(Some("http://example.com/gws"), 3000, "127.0.0.1");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "http://example.com/gws");
     }
 }
