@@ -229,8 +229,7 @@ fn urlencode(s: &str) -> String {
 /// `http://localhost:3000`.
 fn server_base(port: u16, bind: &str) -> String {
     match bind {
-        "0.0.0.0" | "127.0.0.1" => format!("http://localhost:{port}"),
-        "::" => format!("http://[::1]:{port}"),
+        "0.0.0.0" | "127.0.0.1" | "::" | "::1" => format!("http://localhost:{port}"),
         other if other.contains(':') => format!("http://[{other}]:{port}"),
         other => format!("http://{other}:{port}"),
     }
@@ -857,8 +856,8 @@ mod tests {
 
     #[test]
     fn server_base_ipv6_brackets() {
-        assert_eq!(server_base(3000, "::"), "http://[::1]:3000");
-        assert_eq!(server_base(3000, "::1"), "http://[::1]:3000");
+        assert_eq!(server_base(3000, "::"), "http://localhost:3000");
+        assert_eq!(server_base(3000, "::1"), "http://localhost:3000");
         assert_eq!(server_base(3000, "0.0.0.0"), "http://localhost:3000");
         assert_eq!(server_base(3000, "127.0.0.1"), "http://localhost:3000");
     }

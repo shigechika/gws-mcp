@@ -151,6 +151,8 @@ Then point Claude at it — no `command`/`args` needed, just a URL:
 
 The server binds to `127.0.0.1` by default (loopback only). Use `--bind 0.0.0.0` to allow external access (not recommended without additional auth).
 
+> **Note on `--bind` and OAuth2 resource URLs:** Loopback binds (`127.0.0.1`, `0.0.0.0`, `::`, `::1`) all advertise `http://localhost:<port>` in the RFC 9728 Protected Resource Metadata. This ensures the `resource` URL matches what clients connect to. Non-loopback bind addresses (e.g. a specific IP or hostname) are used as-is.
+
 ### OAuth2 PKCE authentication (`--auth`)
 
 Enables a full OAuth2 Authorization Server on the HTTP transport, compliant with the [MCP Authorization spec 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization/).
