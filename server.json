@@ -1,8 +1,8 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.shigechika/gws-mcp",
-  "title": "Google Workspace MCP",
-  "description": "MCP server for Google Workspace APIs (Gmail, Drive, Calendar, and more)",
+  "title": "MCP fork of Google Workspace CLI",
+  "description": "MCP fork of Google Workspace CLI (Gmail, Drive, Calendar, and more)",
   "repository": {
     "url": "https://github.com/shigechika/gws-mcp",
     "source": "github"
