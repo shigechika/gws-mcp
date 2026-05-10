@@ -339,3 +339,17 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
+  ci:
+    name: CI
+    needs: [changes, test, nix, lint, deny, skills, lint-skills, build-linux, build]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all jobs passed or were skipped
+        run: |
+          results='${{ toJSON(needs.*.result) }}'
+          if echo "$results" | grep -q '"failure"\|"cancelled"'; then
+            echo "One or more required jobs failed or were cancelled."
+            exit 1
+          fi
+          echo "All jobs passed or were skipped."
