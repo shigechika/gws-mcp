@@ -24,8 +24,8 @@ Dynamically generates tools from Discovery Documents and serves them via the MCP
 # Start MCP server for Gmail with helper tools
 gws mcp -s gmail --helpers
 
-# Serve multiple services
-gws mcp -s gmail -s drive -s calendar --helpers
+# Serve multiple services (comma-separated)
+gws mcp -s gmail,drive,calendar --helpers
 
 # Compact mode (one tool per service)
 gws mcp -s gmail --tool-mode compact
