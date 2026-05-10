@@ -270,3 +270,97 @@ jobs:
             --method PUT \
             --field message="add: gws-mcp formula ${VERSION}" \
             --field content="$(base64 -w0 /tmp/gws-mcp.rb)"
+
+  docker:
+    name: Build and push Docker image
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set version
+        run: |
+          TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
+          VERSION="${TAG#fork/v}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Download linux-amd64 artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: gws-mcp-${{ env.VERSION }}-linux-amd64
+          path: /tmp/linux-amd64/
+
+      - name: Download linux-arm64 artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: gws-mcp-${{ env.VERSION }}-linux-arm64
+          path: /tmp/linux-arm64/
+
+      - name: Prepare Docker context
+        run: |
+          mkdir docker-context
+          cp Dockerfile docker-context/
+          tar xzf "/tmp/linux-amd64/gws-mcp-${{ env.VERSION }}-linux-amd64.tar.gz" -C /tmp/linux-amd64/
+          tar xzf "/tmp/linux-arm64/gws-mcp-${{ env.VERSION }}-linux-arm64.tar.gz" -C /tmp/linux-arm64/
+          cp /tmp/linux-amd64/gws docker-context/gws-amd64
+          cp /tmp/linux-arm64/gws docker-context/gws-arm64
+
+      - name: Log in to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build and push
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: docker-context/
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ env.VERSION }}
+
+  mcp-registry:
+    name: Publish to MCP Registry
+    needs: docker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Patch server.json version from tag
+        run: |
+          TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
+          VERSION="${TAG#fork/v}"
+          jq --arg v "$VERSION" \
+             '.version = $v | .packages[0].identifier = "ghcr.io/shigechika/gws-mcp:" + $v' \
+             server.json > server.tmp && mv server.tmp server.json
+          if jq -e '.version == "0.0.0" or (.packages[0].identifier | endswith(":0.0.0"))' server.json > /dev/null; then
+            echo "::error::server.json still contains placeholder 0.0.0 after patching"
+            exit 1
+          fi
+          echo "Patched server.json to version $VERSION"
+
+      - name: Install mcp-publisher
+        run: |
+          curl -sL https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz | tar xz
+          sudo mv mcp-publisher /usr/local/bin/
+
+      - name: Publish to MCP Registry
+        # continue-on-error: re-running workflow_dispatch with the same tag
+        # would re-publish an already-registered version. The registry rejects
+        # duplicates, so allow the step to fail without blocking the pipeline.
+        continue-on-error: true
+        run: |
+          mcp-publisher login github-oidc
+          mcp-publisher publish

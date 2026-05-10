@@ -85,6 +85,24 @@ sudo rpm -i gws-mcp-<VERSION>-linux-arm64.rpm
 | Linux x86\_64 | `gws-mcp-<VERSION>-linux-amd64.tar.gz` |
 | Linux arm64 | `gws-mcp-<VERSION>-linux-arm64.tar.gz` |
 
+### Docker
+
+```bash
+docker run -i --rm \
+  -v ~/.config/gws:/home/gws/.config/gws \
+  ghcr.io/shigechika/gws-mcp:latest
+```
+
+認証情報はホスト側に保存し、コンテナにマウントします。初回のみセットアップを実行してください:
+
+```bash
+# 初回セットアップ（ホスト上、または docker run -it で実行）
+docker run -it --rm -v ~/.config/gws:/home/gws/.config/gws ghcr.io/shigechika/gws-mcp auth setup
+docker run -it --rm -v ~/.config/gws:/home/gws/.config/gws ghcr.io/shigechika/gws-mcp auth login
+```
+
+利用可能なタグ: `latest`、`<VERSION>`（例: `0.22.5-mcp.1`）
+
 ### Cargo（ソースからビルド）
 
 ```bash
@@ -128,6 +146,10 @@ cargo install --path crates/google-workspace-cli
   }
 }
 ```
+
+### MCP Registry（Docker）
+
+gws-mcp は [Official MCP Registry](https://registry.modelcontextprotocol.io/) に `io.github.shigechika/gws-mcp` として登録されています。Registry に対応した MCP クライアントは自動的に検出・設定できます。
 
 ### HTTP transport（Streamable HTTP）
 

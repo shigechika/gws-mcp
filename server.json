@@ -1,0 +1,44 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.shigechika/gws-mcp",
+  "title": "Google Workspace MCP",
+  "description": "MCP server for Google Workspace APIs (Gmail, Drive, Calendar, and more) via the Google Discovery Service",
+  "repository": {
+    "url": "https://github.com/shigechika/gws-mcp",
+    "source": "github"
+  },
+  "version": "0.0.0",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/shigechika/gws-mcp:0.0.0",
+      "runtimeHint": "docker",
+      "runtimeArguments": [
+        {
+          "type": "positional",
+          "value": "run"
+        },
+        {
+          "type": "positional",
+          "value": "-i"
+        },
+        {
+          "type": "positional",
+          "value": "--rm"
+        },
+        {
+          "type": "named",
+          "name": "-v",
+          "description": "Mount the gws credentials directory (populated by 'gws auth setup' and 'gws auth login')",
+          "format": "string",
+          "default": "~/.config/gws:/home/gws/.config/gws",
+          "valueHint": "host-path:container-path",
+          "isRequired": false
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
