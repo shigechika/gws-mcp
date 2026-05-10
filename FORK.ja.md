@@ -12,6 +12,8 @@ upstream が削除した **MCP（Model Context Protocol）サーバー機能** �
 |---|---|---|
 | MCP サーバー (`gws mcp`) | 削除済み | 維持・メンテナンス中 |
 | MCP helper tools (`--helpers`) | なし | `gmail_send` 等を独自実装 |
+| HTTP transport (`--transport http`) | なし | Streamable HTTP（Phase 1: 認証なし） |
+| OAuth2 PKCE 認証 (`--auth`) | なし | MCP spec 2025-11-25 準拠の AS（RFC 9728 + RFC 8414 + PKCE S256） |
 | CI/CD ワークフロー | upstream 環境依存 | 最小構成（CI + Policy + Sync + Release） |
 
 ### MCP サーバー
@@ -22,8 +24,8 @@ Discovery Document から動的にツールを生成し、stdio 経由で MCP �
 # Gmail の MCP サーバーを起動（helper tool 付き）
 gws mcp -s gmail --helpers
 
-# 複数サービスを同時に提供
-gws mcp -s gmail -s drive -s calendar --helpers
+# 複数サービスを同時に提供（カンマ区切り）
+gws mcp -s gmail,drive,calendar --helpers
 
 # compact モード（サービスごとに1ツール）
 gws mcp -s gmail --tool-mode compact
@@ -73,7 +75,7 @@ cargo install --path crates/google-workspace-cli
   "mcpServers": {
     "gws": {
       "command": "gws",
-      "args": ["mcp", "-s", "gmail", "-s", "drive", "-s", "calendar", "--helpers"]
+      "args": ["mcp", "-s", "gmail,drive,calendar", "--helpers"]
     }
   }
 }
@@ -86,11 +88,68 @@ cargo install --path crates/google-workspace-cli
   "mcpServers": {
     "gws": {
       "command": "gws",
-      "args": ["mcp", "-s", "gmail", "-s", "drive", "-s", "calendar", "--helpers"]
+      "args": ["mcp", "-s", "gmail,drive,calendar", "--helpers"]
     }
   }
 }
 ```
+
+### HTTP transport（Streamable HTTP）
+
+サーバーを先に起動します:
+
+```bash
+gws mcp -s gmail,drive,calendar --helpers --transport http --port 3000
+```
+
+Claude Code からは `command`/`args` 不要で URL だけ指定します:
+
+```json
+{
+  "mcpServers": {
+    "gws": {
+      "type": "http",
+      "url": "http://localhost:3000/mcp"
+    }
+  }
+}
+```
+
+デフォルトのバインドは `127.0.0.1`（ループバックのみ）。`--bind 0.0.0.0` で外部からもアクセス可能になりますが、`--auth` なしでの使用は推奨しません。
+
+> **`--bind` と OAuth2 resource URL について:** ループバックバインド（`127.0.0.1`、`0.0.0.0`、`::`、`::1`）はいずれも RFC 9728 Protected Resource Metadata に `http://localhost:<port>` を広告します。クライアントが接続に使う URL と一致させるためです。非ループバックアドレス（特定 IP やホスト名）はそのまま使用されます。
+
+### OAuth2 PKCE 認証（`--auth`）
+
+[MCP Authorization spec 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization/) に準拠した OAuth2 Authorization Server を HTTP transport 上で有効化します。
+
+**前提条件:**
+1. `gws auth setup` で Google OAuth2 ウェブアプリ認証情報 (`client_secret.json`) を作成
+2. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) で `http://localhost:<port>/oauth/callback` を **承認済みリダイレクト URI** に追加
+
+```bash
+gws mcp -s gmail,drive,calendar --helpers --transport http --port 3000 --auth
+```
+
+公開される OAuth2 エンドポイント:
+
+| エンドポイント | RFC | 用途 |
+|---|---|---|
+| `/.well-known/oauth-protected-resource` | RFC 9728 | Protected Resource Metadata |
+| `/.well-known/oauth-authorization-server` | RFC 8414 | Authorization Server Metadata |
+| `/oauth/register` | RFC 7591（スタブ） | Dynamic Client Registration |
+| `/oauth/authorize` | RFC 6749 | 認可エンドポイント — Google にリダイレクト |
+| `/oauth/callback` | — | Google OAuth2 コールバック |
+| `/oauth/token` | RFC 6749 | トークンエンドポイント — コード + PKCE verifier をベアラートークンに交換 |
+
+`/mcp` へのリクエストはすべて有効な `Authorization: Bearer <token>` ヘッダが必要です。セッションは8時間で失効します。
+
+認証済みユーザーの MCP ツール呼び出しは、OAuth フロー中に取得したそのユーザー自身の Google アクセストークンを使用します。スコープは認可時のサービス一覧（例: `-s gmail,drive`）から導出されます。`--auth` 無効時は共有の `gws auth login` 認証情報にフォールバックします。
+
+> **現在の制限:**
+> - ユーザーごとのトークンは**メモリ上にのみ保存**されます。`gws mcp` を再起動するとトークンが消去され、再認証が必要になります。
+> - GWS スコープは [`DEFAULT_SCOPES`](crates/google-workspace-cli/src/auth_commands.rs) のみから導出されます。このリスト外のサービス（例: `admin`、`script`）は認可時に固有のスコープがリクエストされず、API 呼び出しが権限エラーになる場合があります。
+> いずれも将来のリリースで対応予定です。
 
 ## このフォークで対応した upstream の MCP issue
 
