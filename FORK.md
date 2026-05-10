@@ -85,6 +85,24 @@ Download the `.tar.gz` archive for your platform from the [latest release](https
 | Linux x86\_64 | `gws-mcp-<VERSION>-linux-amd64.tar.gz` |
 | Linux arm64 | `gws-mcp-<VERSION>-linux-arm64.tar.gz` |
 
+### Docker
+
+```bash
+docker run -i --rm \
+  -v ~/.config/gws:/home/gws/.config/gws \
+  ghcr.io/shigechika/gws-mcp:latest
+```
+
+Credentials are stored on the host and mounted into the container. Run the setup commands once:
+
+```bash
+# First-time setup (run on host or via docker run -it)
+docker run -it --rm -v ~/.config/gws:/home/gws/.config/gws ghcr.io/shigechika/gws-mcp auth setup
+docker run -it --rm -v ~/.config/gws:/home/gws/.config/gws ghcr.io/shigechika/gws-mcp auth login
+```
+
+Available tags: `latest`, `<VERSION>` (e.g. `0.22.5-mcp.1`).
+
 ### Cargo (from source)
 
 ```bash
@@ -128,6 +146,10 @@ This installs the binary to `~/.cargo/bin/gws`. Note that `cargo build --release
   }
 }
 ```
+
+### MCP Registry (Docker)
+
+gws-mcp is listed in the [Official MCP Registry](https://registry.modelcontextprotocol.io/) as `io.github.shigechika/gws-mcp`. MCP clients that support the registry can discover and configure it automatically.
 
 ### HTTP transport (Streamable HTTP)
 
