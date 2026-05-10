@@ -357,6 +357,10 @@ jobs:
           sudo mv mcp-publisher /usr/local/bin/
 
       - name: Publish to MCP Registry
+        # continue-on-error: re-running workflow_dispatch with the same tag
+        # would re-publish an already-registered version. The registry rejects
+        # duplicates, so allow the step to fail without blocking the pipeline.
+        continue-on-error: true
         run: |
           mcp-publisher login github-oidc
           mcp-publisher publish

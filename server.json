@@ -33,7 +33,7 @@
           "format": "string",
           "default": "~/.config/gws:/home/gws/.config/gws",
           "valueHint": "host-path:container-path",
-          "isRequired": true
+          "isRequired": false
         }
       ],
       "transport": {

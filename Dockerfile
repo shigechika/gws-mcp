@@ -7,6 +7,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY gws-${TARGETARCH} /usr/local/bin/gws
+RUN chmod +x /usr/local/bin/gws
 
 RUN useradd -m -u 1000 gws
 
