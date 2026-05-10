@@ -50,6 +50,41 @@ brew install shigechika/tap/gws-mcp
 
 Rust ツールチェーン不要。macOS（Apple Silicon / Intel）と Linux（x86\_64 / arm64）向けのバイナリを事前ビルドして配布しています。
 
+### Debian / Ubuntu（.deb）
+
+```bash
+sudo dpkg -i gws-mcp-<VERSION>-linux-amd64.deb
+# arm64 の場合:
+sudo dpkg -i gws-mcp-<VERSION>-linux-arm64.deb
+```
+
+`.deb` ファイルは[最新リリース](https://github.com/shigechika/gws-mcp/releases/latest)からダウンロードしてください。
+
+### RHEL / Fedora / Amazon Linux（.rpm）
+
+```bash
+sudo rpm -i gws-mcp-<VERSION>-linux-amd64.rpm
+# aarch64 の場合:
+sudo rpm -i gws-mcp-<VERSION>-linux-arm64.rpm
+```
+
+`.rpm` ファイルは[最新リリース](https://github.com/shigechika/gws-mcp/releases/latest)からダウンロードしてください。
+
+### Windows
+
+[最新リリース](https://github.com/shigechika/gws-mcp/releases/latest)から `gws-mcp-<VERSION>-windows-amd64.zip` をダウンロードし、`gws.exe` を展開して `PATH` の通ったディレクトリに配置してください。
+
+### ダイレクトダウンロード（macOS / Linux）
+
+[最新リリース](https://github.com/shigechika/gws-mcp/releases/latest)からプラットフォーム向けの `.tar.gz` をダウンロードし、`gws` を `PATH` の通った場所に配置してください。
+
+| プラットフォーム | アーカイブ |
+|---|---|
+| macOS（Apple Silicon） | `gws-mcp-<VERSION>-macos-arm64.tar.gz` |
+| macOS（Intel） | `gws-mcp-<VERSION>-macos-amd64.tar.gz` |
+| Linux x86\_64 | `gws-mcp-<VERSION>-linux-amd64.tar.gz` |
+| Linux arm64 | `gws-mcp-<VERSION>-linux-arm64.tar.gz` |
+
 ### Cargo（ソースからビルド）
 
 ```bash
