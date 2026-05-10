@@ -74,6 +74,12 @@ fn build_mcp_cli() -> Command {
                 .help("Enable OAuth2 PKCE authentication (HTTP transport only). Requires client_secret.json from `gws auth setup`"),
         )
         .arg(
+            Arg::new("public-url")
+                .long("public-url")
+                .value_name("URL")
+                .help("Public base URL when running behind a reverse proxy (e.g. https://mcp.example.com/gws). Do not include /mcp or /oauth paths. Overrides the auto-detected http://localhost:<port> in OAuth2 metadata."),
+        )
+        .arg(
             Arg::new("services")
                 .long("services")
                 .short('s')
@@ -153,7 +159,9 @@ pub async fn start(args: &[String]) -> Result<(), GwsError> {
             .unwrap_or("127.0.0.1")
             .to_string();
         let enable_auth = matches.get_flag("auth");
-        return crate::mcp_http_server::start_http(config, port, bind, enable_auth).await;
+        let public_url = matches.get_one::<String>("public-url").cloned();
+        return crate::mcp_http_server::start_http(config, port, bind, enable_auth, public_url)
+            .await;
     }
 
     let mut stdin = BufReader::new(tokio::io::stdin()).lines();
