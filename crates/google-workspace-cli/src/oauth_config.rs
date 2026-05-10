@@ -14,17 +14,32 @@
 
 //! Helpers for the OAuth client configuration file.
 //!
-//! Uses the standard Google Cloud Console "installed application" JSON format:
+//! Supports both Google Cloud Console download formats:
+//!
+//! Desktop / installed app (`"installed"` key):
 //! ```json
 //! {
 //!   "installed": {
 //!     "client_id": "...apps.googleusercontent.com",
+//!     "client_secret": "GOCSPX-...",
 //!     "project_id": "my-project",
 //!     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
 //!     "token_uri": "https://oauth2.googleapis.com/token",
-//!     "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-//!     "client_secret": "GOCSPX-...",
 //!     "redirect_uris": ["http://localhost"]
+//!   }
+//! }
+//! ```
+//!
+//! Web application (`"web"` key):
+//! ```json
+//! {
+//!   "web": {
+//!     "client_id": "...apps.googleusercontent.com",
+//!     "client_secret": "GOCSPX-...",
+//!     "project_id": "my-project",
+//!     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+//!     "token_uri": "https://oauth2.googleapis.com/token",
+//!     "redirect_uris": ["https://example.com/oauth/callback"]
 //!   }
 //! }
 //! ```
@@ -47,9 +62,13 @@ pub struct InstalledConfig {
 }
 
 /// Wrapper matching the Google Cloud Console download format.
+/// Supports both `"installed"` (desktop) and `"web"` (web application) client types.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ClientSecretFile {
-    pub installed: InstalledConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed: Option<InstalledConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web: Option<InstalledConfig>,
 }
 
 /// Returns the path for the client secret config file.
@@ -64,7 +83,7 @@ pub fn save_client_config(
     project_id: &str,
 ) -> anyhow::Result<PathBuf> {
     let config = ClientSecretFile {
-        installed: InstalledConfig {
+        installed: Some(InstalledConfig {
             client_id: client_id.to_string(),
             client_secret: client_secret.to_string(),
             project_id: project_id.to_string(),
@@ -72,7 +91,8 @@ pub fn save_client_config(
             token_uri: "https://oauth2.googleapis.com/token".to_string(),
             auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs".to_string(),
             redirect_uris: vec!["http://localhost".to_string()],
-        },
+        }),
+        web: None,
     };
 
     let path = client_config_path();
@@ -88,13 +108,18 @@ pub fn save_client_config(
 }
 
 /// Loads OAuth client configuration from the standard Google Cloud Console format.
+/// Accepts both `"installed"` (desktop) and `"web"` (web application) client types.
 pub fn load_client_config() -> anyhow::Result<InstalledConfig> {
     let path = client_config_path();
     let data = std::fs::read_to_string(&path)
         .map_err(|e| anyhow::anyhow!("Cannot read {}: {e}", path.display()))?;
     let file: ClientSecretFile = serde_json::from_str(&data)
         .map_err(|e| anyhow::anyhow!("Invalid client_secret.json format: {e}"))?;
-    Ok(file.installed)
+    file.installed
+        .or(file.web)
+        .ok_or_else(|| anyhow::anyhow!(
+            "client_secret.json must contain an 'installed' or 'web' key (got neither)"
+        ))
 }
 
 #[cfg(test)]
@@ -107,7 +132,7 @@ mod tests {
         let path = dir.path().join("client_secret.json");
 
         let config = ClientSecretFile {
-            installed: InstalledConfig {
+            installed: Some(InstalledConfig {
                 client_id: "test-id.apps.googleusercontent.com".to_string(),
                 client_secret: "GOCSPX-test".to_string(),
                 project_id: "my-project".to_string(),
@@ -116,7 +141,8 @@ mod tests {
                 auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs"
                     .to_string(),
                 redirect_uris: vec!["http://localhost".to_string()],
-            },
+            }),
+            web: None,
         };
 
         let json = serde_json::to_string_pretty(&config).unwrap();
@@ -125,17 +151,14 @@ mod tests {
         let data = std::fs::read_to_string(&path).unwrap();
         let loaded: ClientSecretFile = serde_json::from_str(&data).unwrap();
 
-        assert_eq!(
-            loaded.installed.client_id,
-            "test-id.apps.googleusercontent.com"
-        );
-        assert_eq!(loaded.installed.client_secret, "GOCSPX-test");
-        assert_eq!(loaded.installed.project_id, "my-project");
+        let cfg = loaded.installed.unwrap();
+        assert_eq!(cfg.client_id, "test-id.apps.googleusercontent.com");
+        assert_eq!(cfg.client_secret, "GOCSPX-test");
+        assert_eq!(cfg.project_id, "my-project");
     }
 
     #[test]
-    fn test_parse_google_console_format() {
-        // Real format from Google Cloud Console download
+    fn test_parse_installed_format() {
         let json = r#"{
             "installed": {
                 "client_id": "test-client-id.apps.googleusercontent.com",
@@ -149,14 +172,66 @@ mod tests {
         }"#;
 
         let config: ClientSecretFile = serde_json::from_str(json).unwrap();
-        assert_eq!(config.installed.project_id, "test-project-id");
-        assert_eq!(config.installed.client_secret, "test-client-secret");
-        assert_eq!(config.installed.redirect_uris, vec!["http://localhost"]);
+        let cfg = config.installed.unwrap();
+        assert_eq!(cfg.project_id, "test-project-id");
+        assert_eq!(cfg.client_secret, "test-client-secret");
+        assert_eq!(cfg.redirect_uris, vec!["http://localhost"]);
+        assert!(config.web.is_none());
+    }
+
+    #[test]
+    fn test_parse_web_format() {
+        // Web application format from Google Cloud Console
+        let json = r#"{
+            "web": {
+                "client_id": "web-client-id.apps.googleusercontent.com",
+                "project_id": "my-project",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                "client_secret": "web-client-secret",
+                "redirect_uris": ["https://mcp.example.com/gws/oauth/callback"]
+            }
+        }"#;
+
+        let config: ClientSecretFile = serde_json::from_str(json).unwrap();
+        assert!(config.installed.is_none());
+        let cfg = config.web.unwrap();
+        assert_eq!(cfg.client_id, "web-client-id.apps.googleusercontent.com");
+        assert_eq!(cfg.client_secret, "web-client-secret");
+        assert_eq!(
+            cfg.redirect_uris,
+            vec!["https://mcp.example.com/gws/oauth/callback"]
+        );
+    }
+
+    #[test]
+    fn test_load_client_config_prefers_installed_over_web() {
+        // If both keys exist (unusual), "installed" takes precedence
+        let json = r#"{
+            "installed": {
+                "client_id": "installed-id",
+                "project_id": "p",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "client_secret": "installed-secret"
+            },
+            "web": {
+                "client_id": "web-id",
+                "project_id": "p",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "client_secret": "web-secret"
+            }
+        }"#;
+
+        let file: ClientSecretFile = serde_json::from_str(json).unwrap();
+        let cfg = file.installed.or(file.web).unwrap();
+        assert_eq!(cfg.client_id, "installed-id");
     }
 
     #[test]
     fn test_parse_missing_optional_fields() {
-        // Minimal format — only required fields
         let json = r#"{
             "installed": {
                 "client_id": "test-id",
@@ -168,14 +243,26 @@ mod tests {
         }"#;
 
         let config: ClientSecretFile = serde_json::from_str(json).unwrap();
-        assert_eq!(config.installed.client_id, "test-id");
-        assert!(config.installed.redirect_uris.is_empty());
-        assert!(config.installed.auth_provider_x509_cert_url.is_empty());
+        let cfg = config.installed.unwrap();
+        assert_eq!(cfg.client_id, "test-id");
+        assert!(cfg.redirect_uris.is_empty());
+        assert!(cfg.auth_provider_x509_cert_url.is_empty());
+    }
+
+    #[test]
+    fn test_parse_neither_key_fails_at_load() {
+        // Parses OK as JSON but load_client_config() would return Err
+        let json = r#"{ "wrong_key": {} }"#;
+        let file: ClientSecretFile = serde_json::from_str(json).unwrap();
+        assert!(file.installed.is_none());
+        assert!(file.web.is_none());
+        let result = file.installed.or(file.web);
+        assert!(result.is_none());
     }
 
     #[test]
     fn test_parse_invalid_json_fails() {
-        let json = r#"{ "wrong_key": {} }"#;
+        let json = r#"not json"#;
         let result = serde_json::from_str::<ClientSecretFile>(json);
         assert!(result.is_err());
     }
