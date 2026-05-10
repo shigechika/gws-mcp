@@ -110,7 +110,7 @@ This installs the binary to `~/.cargo/bin/gws`. Note that `cargo build --release
   "mcpServers": {
     "gws": {
       "command": "gws",
-      "args": ["mcp", "-s", "gmail", "-s", "drive", "-s", "calendar", "--helpers"]
+      "args": ["mcp", "-s", "gmail,drive,calendar", "--helpers"]
     }
   }
 }
@@ -123,7 +123,7 @@ This installs the binary to `~/.cargo/bin/gws`. Note that `cargo build --release
   "mcpServers": {
     "gws": {
       "command": "gws",
-      "args": ["mcp", "-s", "gmail", "-s", "drive", "-s", "calendar", "--helpers"]
+      "args": ["mcp", "-s", "gmail,drive,calendar", "--helpers"]
     }
   }
 }
@@ -134,15 +134,16 @@ This installs the binary to `~/.cargo/bin/gws`. Note that `cargo build --release
 Start the server first:
 
 ```bash
-gws mcp -s gmail -s drive -s calendar --helpers --transport http --port 3000
+gws mcp -s gmail,drive,calendar --helpers --transport http --port 3000
 ```
 
-Then point Claude at it — no `command`/`args` needed, just a URL:
+Then point Claude Code at it — no `command`/`args` needed, just a URL:
 
 ```json
 {
   "mcpServers": {
     "gws": {
+      "type": "http",
       "url": "http://localhost:3000/mcp"
     }
   }
@@ -162,7 +163,7 @@ Enables a full OAuth2 Authorization Server on the HTTP transport, compliant with
 2. Add `http://localhost:<port>/oauth/callback` as an **Authorized redirect URI** in [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
 
 ```bash
-gws mcp -s gmail -s drive -s calendar --helpers --transport http --port 3000 --auth
+gws mcp -s gmail,drive,calendar --helpers --transport http --port 3000 --auth
 ```
 
 The server exposes these OAuth2 endpoints:
@@ -178,7 +179,7 @@ The server exposes these OAuth2 endpoints:
 
 All requests to `/mcp` require a valid `Authorization: Bearer <token>` header. Sessions expire after 8 hours.
 
-Each authenticated user's MCP tool calls use their own Google access token obtained during the OAuth flow — GWS scopes are derived from the configured service list (e.g. `-s gmail -s drive`) at authorize time. The shared `gws auth login` credential is used only as a fallback when `--auth` is disabled.
+Each authenticated user's MCP tool calls use their own Google access token obtained during the OAuth flow — GWS scopes are derived from the configured service list (e.g. `-s gmail,drive`) at authorize time. The shared `gws auth login` credential is used only as a fallback when `--auth` is disabled.
 
 > **Current limitations:**
 > - Per-user tokens are stored **in memory only**. Restarting `gws mcp` clears all tokens and requires users to re-authenticate.
