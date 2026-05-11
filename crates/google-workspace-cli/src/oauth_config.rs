@@ -115,11 +115,9 @@ pub fn load_client_config() -> anyhow::Result<InstalledConfig> {
         .map_err(|e| anyhow::anyhow!("Cannot read {}: {e}", path.display()))?;
     let file: ClientSecretFile = serde_json::from_str(&data)
         .map_err(|e| anyhow::anyhow!("Invalid client_secret.json format: {e}"))?;
-    file.installed
-        .or(file.web)
-        .ok_or_else(|| anyhow::anyhow!(
-            "client_secret.json must contain an 'installed' or 'web' key (got neither)"
-        ))
+    file.installed.or(file.web).ok_or_else(|| {
+        anyhow::anyhow!("client_secret.json must contain an 'installed' or 'web' key (got neither)")
+    })
 }
 
 #[cfg(test)]
