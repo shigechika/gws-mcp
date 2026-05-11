@@ -34,7 +34,7 @@ use std::{
 
 use axum::{
     extract::{Query, State},
-    http::{Request, StatusCode},
+    http::{header, HeaderValue, Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -318,11 +318,15 @@ async fn bearer_auth_middleware(
         .and_then(|s| s.strip_prefix("Bearer "))
         .map(|s| s.to_string())
     else {
+        let www_auth = format!(
+            "Bearer realm=\"gws-mcp\", resource_metadata=\"{}/.well-known/oauth-protected-resource\"",
+            state.base_url
+        );
         return (
             StatusCode::UNAUTHORIZED,
             [(
-                "WWW-Authenticate",
-                "Bearer realm=\"gws-mcp\", resource_metadata=\"/.well-known/oauth-protected-resource\"",
+                header::WWW_AUTHENTICATE,
+                HeaderValue::from_str(&www_auth).expect("valid header value"),
             )],
         )
             .into_response();
@@ -334,11 +338,15 @@ async fn bearer_auth_middleware(
         match sessions.get(&token) {
             Some(s) if !is_expired(s.created_at, SESSION_TTL) => s.email.clone(),
             _ => {
+                let www_auth = format!(
+                    "Bearer realm=\"gws-mcp\", error=\"invalid_token\", resource_metadata=\"{}/.well-known/oauth-protected-resource\"",
+                    state.base_url
+                );
                 return (
                     StatusCode::UNAUTHORIZED,
                     [(
-                        "WWW-Authenticate",
-                        "Bearer realm=\"gws-mcp\", error=\"invalid_token\", resource_metadata=\"/.well-known/oauth-protected-resource\"",
+                        header::WWW_AUTHENTICATE,
+                        HeaderValue::from_str(&www_auth).expect("valid header value"),
                     )],
                 )
                     .into_response();
@@ -969,5 +977,27 @@ mod tests {
         let result = resolve_base_url(Some("http://example.com/gws"), 3000, "127.0.0.1");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "http://example.com/gws");
+    }
+
+    #[test]
+    fn www_authenticate_resource_metadata_is_absolute_url() {
+        // RFC 9728 §5.1 requires resource_metadata to be an absolute HTTPS URL.
+        // A relative path (/.well-known/...) would cause MCP clients to query the
+        // wrong endpoint when the server is mounted at a sub-path like /gws.
+        let base = "https://mcp.example.com/gws";
+        let value = format!(
+            "Bearer realm=\"gws-mcp\", resource_metadata=\"{}/.well-known/oauth-protected-resource\"",
+            base
+        );
+        let hv = HeaderValue::from_str(&value).unwrap();
+        let hv_str = hv.to_str().unwrap();
+        assert!(
+            hv_str.contains("https://mcp.example.com/gws/.well-known/oauth-protected-resource"),
+            "resource_metadata must be an absolute HTTPS URL, got: {hv_str}"
+        );
+        assert!(
+            !hv_str.contains("\"/.well-known/"),
+            "resource_metadata must not be a relative path, got: {hv_str}"
+        );
     }
 }
