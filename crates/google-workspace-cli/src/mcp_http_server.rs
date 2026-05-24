@@ -1022,10 +1022,12 @@ mod tests {
 
     #[test]
     fn redirect_uri_loopback_always_allowed() {
-        let local_base = "http://localhost:3000";
-        assert!(is_redirect_uri_allowed(local_base, "http://localhost:8080"));
-        assert!(is_redirect_uri_allowed(local_base, "http://127.0.0.1:8080"));
-        assert!(is_redirect_uri_allowed(local_base, "http://[::1]:8080"));
+        // Loopback must be accepted regardless of whether base_url is local or public HTTPS.
+        for base in &["http://localhost:3000", "https://mcp.example.com/gws"] {
+            assert!(is_redirect_uri_allowed(base, "http://localhost:8080"));
+            assert!(is_redirect_uri_allowed(base, "http://127.0.0.1:8080"));
+            assert!(is_redirect_uri_allowed(base, "http://[::1]:8080"));
+        }
     }
 
     #[test]
@@ -1044,27 +1046,17 @@ mod tests {
 
     #[test]
     fn redirect_uri_http_non_loopback_always_rejected() {
-        let public_base = "https://mcp.example.com/gws";
-        assert!(!is_redirect_uri_allowed(
-            public_base,
-            "http://client.example.com/callback"
-        ));
+        for base in &["http://localhost:3000", "https://mcp.example.com/gws"] {
+            assert!(!is_redirect_uri_allowed(
+                base,
+                "http://client.example.com/callback"
+            ));
+        }
     }
 
-    #[test]
-    fn http_config_uses_allowed_hosts_only_for_local_without_public_url() {
-        // When --public-url is set, a reverse proxy forwards the public Host header,
-        // so allowed_hosts must be disabled regardless of bind address.
-        let loopback = true;
-        let has_public_url = true;
-        assert!(
-            !(loopback && !has_public_url),
-            "allowed_hosts should be disabled when public_url is set"
-        );
-        let has_public_url = false;
-        assert!(
-            loopback && !has_public_url,
-            "allowed_hosts should be enabled for local-only deployments"
-        );
-    }
+    // Note: the allowed_hosts condition (`loopback && public_url.is_none()`) is
+    // evaluated inline in start_http and cannot be unit-tested without spinning up
+    // an actual HTTP server. The logic is: disable allowed_hosts whenever --public-url
+    // is set, because a reverse proxy forwards the public Host header rather than a
+    // loopback address. See PR #36 / issues #34, #35 for context.
 }
