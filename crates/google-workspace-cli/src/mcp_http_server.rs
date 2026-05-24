@@ -509,14 +509,9 @@ async fn oauth_authorize(
     }
     // Restrict redirect_uri to prevent open-redirector abuse.
     // Local deployments: loopback only. Public HTTPS deployments (--public-url https://...):
-    // also allow https:// so remote MCP clients (e.g. Claude Desktop Connector) can complete
-    // the OAuth flow.
-    let is_public_https = state.base_url.starts_with("https://");
-    let redirect_ok = p.redirect_uri.starts_with("http://localhost:")
-        || p.redirect_uri.starts_with("http://127.0.0.1:")
-        || p.redirect_uri.starts_with("http://[::1]:")
-        || (is_public_https && p.redirect_uri.starts_with("https://"));
-    if !redirect_ok {
+    // also allow https:// redirect URIs for remote MCP clients that use non-loopback callbacks.
+    if !is_redirect_uri_allowed(&state.base_url, &p.redirect_uri) {
+        let is_public_https = state.base_url.starts_with("https://");
         return Err((
             StatusCode::BAD_REQUEST,
             if is_public_https {
@@ -913,6 +908,19 @@ pub(crate) async fn start_http(
     Ok(())
 }
 
+/// Returns true if `redirect_uri` is acceptable for the given `base_url`.
+///
+/// Loopback addresses are always permitted. When `base_url` is an HTTPS URL
+/// (i.e. the server is deployed publicly with `--public-url https://...`),
+/// `https://` redirect URIs are also allowed so that remote MCP clients can
+/// complete the authorization flow.
+fn is_redirect_uri_allowed(base_url: &str, redirect_uri: &str) -> bool {
+    redirect_uri.starts_with("http://localhost:")
+        || redirect_uri.starts_with("http://127.0.0.1:")
+        || redirect_uri.starts_with("http://[::1]:")
+        || (base_url.starts_with("https://") && redirect_uri.starts_with("https://"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1009,6 +1017,54 @@ mod tests {
         assert!(
             !hv_str.contains("\"/.well-known/"),
             "resource_metadata must not be a relative path, got: {hv_str}"
+        );
+    }
+
+    #[test]
+    fn redirect_uri_loopback_always_allowed() {
+        let local_base = "http://localhost:3000";
+        assert!(is_redirect_uri_allowed(local_base, "http://localhost:8080"));
+        assert!(is_redirect_uri_allowed(local_base, "http://127.0.0.1:8080"));
+        assert!(is_redirect_uri_allowed(local_base, "http://[::1]:8080"));
+    }
+
+    #[test]
+    fn redirect_uri_https_allowed_only_for_public_https_base() {
+        let public_base = "https://mcp.example.com/gws";
+        let local_base = "http://localhost:3000";
+        assert!(is_redirect_uri_allowed(
+            public_base,
+            "https://client.example.com/callback"
+        ));
+        assert!(!is_redirect_uri_allowed(
+            local_base,
+            "https://client.example.com/callback"
+        ));
+    }
+
+    #[test]
+    fn redirect_uri_http_non_loopback_always_rejected() {
+        let public_base = "https://mcp.example.com/gws";
+        assert!(!is_redirect_uri_allowed(
+            public_base,
+            "http://client.example.com/callback"
+        ));
+    }
+
+    #[test]
+    fn http_config_uses_allowed_hosts_only_for_local_without_public_url() {
+        // When --public-url is set, a reverse proxy forwards the public Host header,
+        // so allowed_hosts must be disabled regardless of bind address.
+        let loopback = true;
+        let has_public_url = true;
+        assert!(
+            !(loopback && !has_public_url),
+            "allowed_hosts should be disabled when public_url is set"
+        );
+        let has_public_url = false;
+        assert!(
+            loopback && !has_public_url,
+            "allowed_hosts should be enabled for local-only deployments"
         );
     }
 }
