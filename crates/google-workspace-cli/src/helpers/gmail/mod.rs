@@ -1230,6 +1230,12 @@ pub(crate) fn finalize_message(
     use mail_builder::mime::MimePart;
 
     let body_str = body.into();
+    // Pre-compute plain-text fallback before partitioning so it outlives all MimePart borrows.
+    let plain_fallback = if html {
+        strip_html_tags(&body_str)
+    } else {
+        String::new()
+    };
 
     let (inline, regular): (Vec<_>, Vec<_>) = attachments.iter().partition(|a| a.is_inline());
 
@@ -1264,23 +1270,85 @@ pub(crate) fn finalize_message(
             }
             mb.body(MimePart::new("multipart/mixed", mixed_parts))
         }
-    } else {
-        // No inline images, or plain-text mode — all parts become regular attachments.
-        // Callers strip inline parts in plain-text mode (matching Gmail web), so
-        // only regular attachments should reach here. If any inline parts do arrive,
-        // they are treated as regular attachments (defense-in-depth).
-        let mb = if html {
-            mb.html_body(body_str)
+    } else if html {
+        // HTML body, no inline images.
+        // RFC 2046 §5.1.4: multipart/alternative with plain-text fallback first, HTML last.
+        let alternative = MimePart::new(
+            "multipart/alternative",
+            vec![
+                MimePart::new("text/plain", plain_fallback.as_str()),
+                MimePart::new("text/html", body_str.as_str()),
+            ],
+        );
+        if regular.is_empty() {
+            mb.body(alternative)
         } else {
-            mb.text_body(body_str)
-        };
-        attachments.iter().fold(mb, |mb, att| {
+            let mut parts: Vec<MimePart<'_>> = vec![alternative];
+            for att in &regular {
+                parts.push(
+                    MimePart::new(att.content_type.as_str(), att.data.as_slice())
+                        .attachment(att.filename.as_str()),
+                );
+            }
+            mb.body(MimePart::new("multipart/mixed", parts))
+        }
+    } else {
+        // Plain-text mode. Callers strip inline parts in plain-text mode (matching Gmail
+        // web), so only regular attachments should reach here. If any inline parts do
+        // arrive, they are treated as regular attachments (defense-in-depth).
+        attachments.iter().fold(mb.text_body(body_str), |mb, att| {
             mb.attachment(&att.content_type, &att.filename, att.data.as_slice())
         })
     };
 
     mb.write_to_string()
         .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to serialize email: {e}")))
+}
+
+/// Strip HTML tags from a string, inserting newlines for block-level elements.
+///
+/// Intended for generating a plain-text fallback from an HTML email body.
+/// Handles common HTML entities. Does not parse malformed nesting.
+fn strip_html_tags(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut chars = html.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '<' {
+            let mut tag = String::new();
+            for c in chars.by_ref() {
+                if c == '>' {
+                    break;
+                }
+                tag.push(c);
+            }
+            let t = tag.trim().to_ascii_lowercase();
+            if t.starts_with("br")
+                || matches!(
+                    t.as_str(),
+                    "/p" | "/div"
+                        | "/li"
+                        | "/tr"
+                        | "/h1"
+                        | "/h2"
+                        | "/h3"
+                        | "/h4"
+                        | "/h5"
+                        | "/h6"
+                        | "/blockquote"
+                )
+            {
+                out.push('\n');
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&nbsp;", " ")
 }
 
 /// Parse an optional clap argument, trimming whitespace and treating

@@ -259,6 +259,10 @@ mod tests {
         let decoded = strip_qp_soft_breaks(&raw);
 
         assert!(decoded.contains("text/html"));
+        assert!(
+            decoded.contains("multipart/alternative"),
+            "expected multipart/alternative but got text/html only"
+        );
         assert!(extract_header(&raw, "To")
             .unwrap()
             .contains("bob@example.com"));
