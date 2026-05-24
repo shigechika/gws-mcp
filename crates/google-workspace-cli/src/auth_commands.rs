@@ -126,8 +126,8 @@ async fn login_with_proxy_support(
 
     let auth_url = build_proxy_auth_url(client_id, &redirect_uri, scopes);
 
-    println!("Open this URL in your browser to authenticate:\n");
-    println!("  {}\n", auth_url);
+    eprintln!("Open this URL in your browser to authenticate:\n");
+    eprintln!("  {}\n", auth_url);
 
     // Wait for OAuth callback
     let (mut stream, _) = listener
