@@ -839,8 +839,8 @@ pub(crate) async fn start_http(
     let tools_cache: Arc<Mutex<Option<Vec<Tool>>>> = Arc::new(Mutex::new(None));
 
     let loopback = matches!(bind.as_str(), "127.0.0.1" | "::1" | "localhost");
-    // Disable allowed_hosts when a public URL is set: Caddy forwards requests with the
-    // public Host header (e.g. mcp.aikawa.jp) even though the bind address is loopback,
+    // Disable allowed_hosts when a public URL is set: a reverse proxy forwards requests with the
+    // public Host header (e.g. mcp.example.com) even though the bind address is loopback,
     // which causes the default allowed_hosts check to reject all MCP requests with 403.
     let http_config = if loopback && public_url.is_none() {
         StreamableHttpServerConfig::default()
