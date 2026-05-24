@@ -1322,8 +1322,20 @@ fn strip_html_tags(html: &str) -> String {
                 tag.push(c);
             }
             let t = tag.trim().to_ascii_lowercase();
-            if t.starts_with("br") || matches!(t.as_str(), "/p" | "/div" | "/li" | "/tr"
-                | "/h1" | "/h2" | "/h3" | "/h4" | "/h5" | "/h6" | "/blockquote")
+            if t.starts_with("br")
+                || matches!(
+                    t.as_str(),
+                    "/p" | "/div"
+                        | "/li"
+                        | "/tr"
+                        | "/h1"
+                        | "/h2"
+                        | "/h3"
+                        | "/h4"
+                        | "/h5"
+                        | "/h6"
+                        | "/blockquote"
+                )
             {
                 out.push('\n');
             }
