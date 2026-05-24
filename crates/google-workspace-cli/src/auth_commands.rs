@@ -644,6 +644,11 @@ async fn handle_login_inner(
     let enc_path = credential_store::save_encrypted(&creds_str)
         .map_err(|e| GwsError::Auth(format!("Failed to encrypt credentials: {e}")))?;
 
+    // Invalidate any cached access token from a previous account — the new
+    // credentials may belong to a different user and the stale cache would
+    // cause API calls to use the old account's token until it expires (~1h).
+    let _ = std::fs::remove_file(token_cache_path());
+
     let output = json!({
         "status": "success",
         "message": "Authentication successful. Encrypted credentials saved.",
