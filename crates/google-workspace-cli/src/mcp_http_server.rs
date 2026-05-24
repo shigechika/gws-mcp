@@ -507,15 +507,23 @@ async fn oauth_authorize(
             "only S256 code_challenge_method is supported".to_string(),
         ));
     }
-    // Restrict redirect_uri to loopback origins to prevent open-redirector abuse.
-    // MCP clients run locally, so http://localhost:* and http://127.0.0.1:* suffice.
-    if !p.redirect_uri.starts_with("http://localhost:")
-        && !p.redirect_uri.starts_with("http://127.0.0.1:")
-        && !p.redirect_uri.starts_with("http://[::1]:")
-    {
+    // Restrict redirect_uri to prevent open-redirector abuse.
+    // Local deployments: loopback only. Public HTTPS deployments (--public-url https://...):
+    // also allow https:// so remote MCP clients (e.g. Claude Desktop Connector) can complete
+    // the OAuth flow.
+    let is_public_https = state.base_url.starts_with("https://");
+    let redirect_ok = p.redirect_uri.starts_with("http://localhost:")
+        || p.redirect_uri.starts_with("http://127.0.0.1:")
+        || p.redirect_uri.starts_with("http://[::1]:")
+        || (is_public_https && p.redirect_uri.starts_with("https://"));
+    if !redirect_ok {
         return Err((
             StatusCode::BAD_REQUEST,
-            "redirect_uri must be a loopback address (http://localhost:*, http://127.0.0.1:*, http://[::1]:*)".to_string(),
+            if is_public_https {
+                "redirect_uri must be a loopback address or an https:// URI".to_string()
+            } else {
+                "redirect_uri must be a loopback address (http://localhost:*, http://127.0.0.1:*, http://[::1]:*)".to_string()
+            },
         ));
     }
 
