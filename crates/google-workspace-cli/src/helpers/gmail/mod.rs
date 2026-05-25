@@ -4204,11 +4204,16 @@ pub(crate) async fn mcp_compose_reply(
         references: &refs,
     };
 
-    // 5. Build RFC 2822 message
+    // 5. Resolve sender (RFC 2047-encoded From header with display name).
+    // Without this, the From header is absent and Gmail injects raw UTF-8 bytes,
+    // which non-SMTPUTF8 clients display as mojibake (issue #30).
+    let from_mailboxes = resolve_sender(&client, &token, None).await?;
+
+    // 6. Build RFC 2822 message
     let mb = mail_builder::MessageBuilder::new()
         .to(to_mb_address_list(&to_mailboxes))
         .subject(&subject);
-    let mb = apply_optional_headers(mb, None, cc, bcc);
+    let mb = apply_optional_headers(mb, from_mailboxes.as_deref(), cc, bcc);
     let mb = set_threading_headers(mb, &threading);
     let raw_message = finalize_message(mb, body_text, false, &[])?;
 
