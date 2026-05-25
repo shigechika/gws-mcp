@@ -507,15 +507,18 @@ async fn oauth_authorize(
             "only S256 code_challenge_method is supported".to_string(),
         ));
     }
-    // Restrict redirect_uri to loopback origins to prevent open-redirector abuse.
-    // MCP clients run locally, so http://localhost:* and http://127.0.0.1:* suffice.
-    if !p.redirect_uri.starts_with("http://localhost:")
-        && !p.redirect_uri.starts_with("http://127.0.0.1:")
-        && !p.redirect_uri.starts_with("http://[::1]:")
-    {
+    // Restrict redirect_uri to prevent open-redirector abuse.
+    // Local deployments: loopback only. Public HTTPS deployments (--public-url https://...):
+    // also allow https:// redirect URIs for remote MCP clients that use non-loopback callbacks.
+    if !is_redirect_uri_allowed(&state.base_url, &p.redirect_uri) {
+        let is_public_https = state.base_url.starts_with("https://");
         return Err((
             StatusCode::BAD_REQUEST,
-            "redirect_uri must be a loopback address (http://localhost:*, http://127.0.0.1:*, http://[::1]:*)".to_string(),
+            if is_public_https {
+                "redirect_uri must be a loopback address or an https:// URI".to_string()
+            } else {
+                "redirect_uri must be a loopback address (http://localhost:*, http://127.0.0.1:*, http://[::1]:*)".to_string()
+            },
         ));
     }
 
@@ -831,7 +834,10 @@ pub(crate) async fn start_http(
     let tools_cache: Arc<Mutex<Option<Vec<Tool>>>> = Arc::new(Mutex::new(None));
 
     let loopback = matches!(bind.as_str(), "127.0.0.1" | "::1" | "localhost");
-    let http_config = if loopback {
+    // Disable allowed_hosts when a public URL is set: a reverse proxy forwards requests with the
+    // public Host header (e.g. mcp.example.com) even though the bind address is loopback,
+    // which causes the default allowed_hosts check to reject all MCP requests with 403.
+    let http_config = if loopback && public_url.is_none() {
         StreamableHttpServerConfig::default()
     } else {
         StreamableHttpServerConfig::default().disable_allowed_hosts()
@@ -900,6 +906,19 @@ pub(crate) async fn start_http(
         .map_err(|e| GwsError::Other(anyhow::anyhow!("HTTP server error: {e}")))?;
 
     Ok(())
+}
+
+/// Returns true if `redirect_uri` is acceptable for the given `base_url`.
+///
+/// Loopback addresses are always permitted. When `base_url` is an HTTPS URL
+/// (i.e. the server is deployed publicly with `--public-url https://...`),
+/// `https://` redirect URIs are also allowed so that remote MCP clients can
+/// complete the authorization flow.
+fn is_redirect_uri_allowed(base_url: &str, redirect_uri: &str) -> bool {
+    redirect_uri.starts_with("http://localhost:")
+        || redirect_uri.starts_with("http://127.0.0.1:")
+        || redirect_uri.starts_with("http://[::1]:")
+        || (base_url.starts_with("https://") && redirect_uri.starts_with("https://"))
 }
 
 #[cfg(test)]
@@ -1000,4 +1019,44 @@ mod tests {
             "resource_metadata must not be a relative path, got: {hv_str}"
         );
     }
+
+    #[test]
+    fn redirect_uri_loopback_always_allowed() {
+        // Loopback must be accepted regardless of whether base_url is local or public HTTPS.
+        for base in &["http://localhost:3000", "https://mcp.example.com/gws"] {
+            assert!(is_redirect_uri_allowed(base, "http://localhost:8080"));
+            assert!(is_redirect_uri_allowed(base, "http://127.0.0.1:8080"));
+            assert!(is_redirect_uri_allowed(base, "http://[::1]:8080"));
+        }
+    }
+
+    #[test]
+    fn redirect_uri_https_allowed_only_for_public_https_base() {
+        let public_base = "https://mcp.example.com/gws";
+        let local_base = "http://localhost:3000";
+        assert!(is_redirect_uri_allowed(
+            public_base,
+            "https://client.example.com/callback"
+        ));
+        assert!(!is_redirect_uri_allowed(
+            local_base,
+            "https://client.example.com/callback"
+        ));
+    }
+
+    #[test]
+    fn redirect_uri_http_non_loopback_always_rejected() {
+        for base in &["http://localhost:3000", "https://mcp.example.com/gws"] {
+            assert!(!is_redirect_uri_allowed(
+                base,
+                "http://client.example.com/callback"
+            ));
+        }
+    }
+
+    // Note: the allowed_hosts condition (`loopback && public_url.is_none()`) is
+    // evaluated inline in start_http and cannot be unit-tested without spinning up
+    // an actual HTTP server. The logic is: disable allowed_hosts whenever --public-url
+    // is set, because a reverse proxy forwards the public Host header rather than a
+    // loopback address. See PR #36 / issues #34, #35 for context.
 }
