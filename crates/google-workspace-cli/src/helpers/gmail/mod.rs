@@ -2854,6 +2854,29 @@ mod tests {
     }
 
     #[test]
+    fn test_from_header_with_non_ascii_display_name_is_rfc2047_encoded() {
+        // Regression test for issue #30: gmail_reply MCP tool omitted the From header,
+        // letting Gmail inject raw UTF-8 bytes that SMTPUTF8-unaware clients show as mojibake.
+        // After the fix, mcp_compose_reply calls resolve_sender and passes the result to
+        // apply_optional_headers — verify that path produces RFC 2047-encoded output.
+        let sender = [Mailbox::parse("山田 太郎 <yamada@example.com>")];
+        let recipient = [Mailbox::parse("bob@example.com")];
+        let mb = mail_builder::MessageBuilder::new()
+            .to(to_mb_address_list(&recipient))
+            .subject("Re: Test");
+        let mb = apply_optional_headers(mb, Some(&sender), None, None);
+        let raw = mb.write_to_string().unwrap();
+
+        let from_line = extract_header(&raw, "From").expect("From header must be present");
+        assert!(from_line.contains("yamada@example.com"), "email address must be preserved");
+        assert!(
+            !from_line.contains("山田") && !from_line.contains("太郎"),
+            "raw CJK must not appear in From header"
+        );
+        assert!(from_line.contains("=?utf-8?"), "From header must use RFC 2047 encoding");
+    }
+
+    #[test]
     fn test_mailbox_parse_list() {
         let list = Mailbox::parse_list("alice@example.com, Bob <bob@example.com>");
         assert_eq!(list.len(), 2);
