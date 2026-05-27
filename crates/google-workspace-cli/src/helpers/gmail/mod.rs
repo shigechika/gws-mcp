@@ -2868,12 +2868,18 @@ mod tests {
         let raw = mb.write_to_string().unwrap();
 
         let from_line = extract_header(&raw, "From").expect("From header must be present");
-        assert!(from_line.contains("yamada@example.com"), "email address must be preserved");
+        assert!(
+            from_line.contains("yamada@example.com"),
+            "email address must be preserved"
+        );
         assert!(
             !from_line.contains("山田") && !from_line.contains("太郎"),
             "raw CJK must not appear in From header"
         );
-        assert!(from_line.contains("=?utf-8?"), "From header must use RFC 2047 encoding");
+        assert!(
+            from_line.contains("=?utf-8?"),
+            "From header must use RFC 2047 encoding"
+        );
     }
 
     #[test]
