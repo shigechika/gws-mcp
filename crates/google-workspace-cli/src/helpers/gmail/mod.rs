@@ -2417,6 +2417,84 @@ mod tests {
         assert!(extract_plain_text_body(&payload).is_none());
     }
 
+    fn sample_original() -> OriginalMessage {
+        OriginalMessage {
+            thread_id: Some("thread-1".to_string()),
+            message_id: "<msg@example.com>".to_string(),
+            from: Mailbox::parse("Alice <alice@example.com>"),
+            to: Mailbox::parse_list("bob@example.com, Carol <carol@example.com>"),
+            cc: Some(Mailbox::parse_list("dave@example.com")),
+            subject: "Re: test".to_string(),
+            date: Some("Thu, 1 Jan 2026 00:00:00 +0000".to_string()),
+            body_text: "plain body".to_string(),
+            body_html: Some("<p>html body</p>".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_build_read_result_text_with_headers() {
+        let result = build_read_result(&sample_original(), false, true);
+        assert_eq!(result["message_id"], "<msg@example.com>");
+        assert_eq!(result["thread_id"], "thread-1");
+        assert_eq!(result["subject"], "Re: test");
+        assert_eq!(result["date"], "Thu, 1 Jan 2026 00:00:00 +0000");
+        assert_eq!(result["body"], "plain body");
+        // From is a single string; To/Cc are arrays.
+        assert!(result["from"]
+            .as_str()
+            .unwrap()
+            .contains("alice@example.com"));
+        let to = result["to"].as_array().unwrap();
+        assert_eq!(to.len(), 2);
+        assert!(to[1].as_str().unwrap().contains("carol@example.com"));
+        let cc = result["cc"].as_array().unwrap();
+        assert_eq!(cc.len(), 1);
+        assert!(cc[0].as_str().unwrap().contains("dave@example.com"));
+    }
+
+    #[test]
+    fn test_build_read_result_html_body() {
+        let result = build_read_result(&sample_original(), true, false);
+        assert_eq!(result["body"], "<p>html body</p>");
+    }
+
+    #[test]
+    fn test_build_read_result_html_falls_back_to_text_when_empty() {
+        let mut original = sample_original();
+        original.body_html = Some("   ".to_string()); // whitespace-only HTML
+        let result = build_read_result(&original, true, false);
+        assert_eq!(result["body"], "plain body");
+    }
+
+    #[test]
+    fn test_build_read_result_omits_headers_when_disabled() {
+        let result = build_read_result(&sample_original(), false, false);
+        // Body and identifiers are always present; headers are omitted.
+        assert_eq!(result["body"], "plain body");
+        assert_eq!(result["message_id"], "<msg@example.com>");
+        assert!(result.get("from").is_none());
+        assert!(result.get("to").is_none());
+        assert!(result.get("cc").is_none());
+        assert!(result.get("subject").is_none());
+    }
+
+    #[test]
+    fn test_build_read_result_omits_absent_optional_fields() {
+        let original = OriginalMessage {
+            message_id: "<m@example.com>".to_string(),
+            from: Mailbox::parse("alice@example.com"),
+            to: Mailbox::parse_list("bob@example.com"),
+            body_text: "b".to_string(),
+            ..Default::default()
+        };
+        let result = build_read_result(&original, false, true);
+        // No thread_id, cc, or date on this message → keys absent, not null.
+        assert!(result.get("thread_id").is_none());
+        assert!(result.get("cc").is_none());
+        assert!(result.get("date").is_none());
+    }
+
     #[test]
     fn test_inject_commands() {
         let helper = GmailHelper;
@@ -4252,6 +4330,72 @@ pub(crate) async fn mcp_compose_reply(
 /// Wrapper around the internal `build_send_metadata` for MCP use.
 pub(crate) fn mcp_build_send_metadata(thread_id: Option<&str>, draft: bool) -> Option<String> {
     build_send_metadata(thread_id, draft)
+}
+
+/// MCP-facing helper mirroring the `+read` CLI command: fetch a Gmail message
+/// and return a compact JSON object with the parsed headers and the decoded
+/// body. Defaults to the `text/plain` body (falling back to the snippet) and
+/// switches to the HTML body when `use_html` is set. Keeps the heavy raw API
+/// payload (MIME parts, base64 blobs, DKIM/ARC headers) out of the agent's
+/// context window — the motivation behind upstream googleworkspace/cli#438.
+pub(crate) async fn mcp_read_message(
+    message_id: &str,
+    use_html: bool,
+    include_headers: bool,
+) -> Result<Value, GwsError> {
+    let token = auth::get_token(&[GMAIL_READONLY_SCOPE])
+        .await
+        .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
+    let client = crate::client::build_client()?;
+    let original = fetch_message_metadata(&client, &token, message_id).await?;
+
+    Ok(build_read_result(&original, use_html, include_headers))
+}
+
+/// Shape a fetched [`OriginalMessage`] into the compact JSON returned by the
+/// `gmail_read` MCP tool. Selects the plain-text body (falling back to the
+/// snippet) or the HTML body (falling back to plain text when HTML is empty),
+/// and includes the parsed headers only when `include_headers` is set. Kept
+/// pure (no I/O) so the body/header shaping is unit-testable.
+fn build_read_result(original: &OriginalMessage, use_html: bool, include_headers: bool) -> Value {
+    let body = if use_html {
+        original
+            .body_html
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(&original.body_text)
+    } else {
+        original.body_text.as_str()
+    };
+
+    let mut result = serde_json::Map::new();
+    result.insert("message_id".to_string(), json!(original.message_id));
+    if let Some(thread_id) = &original.thread_id {
+        result.insert("thread_id".to_string(), json!(thread_id));
+    }
+    if include_headers {
+        result.insert("from".to_string(), json!(original.from.to_string()));
+        result.insert(
+            "to".to_string(),
+            json!(original
+                .to
+                .iter()
+                .map(|m| m.to_string())
+                .collect::<Vec<_>>()),
+        );
+        if let Some(cc) = &original.cc {
+            result.insert(
+                "cc".to_string(),
+                json!(cc.iter().map(|m| m.to_string()).collect::<Vec<_>>()),
+            );
+        }
+        result.insert("subject".to_string(), json!(original.subject));
+        if let Some(date) = &original.date {
+            result.insert("date".to_string(), json!(date));
+        }
+    }
+    result.insert("body".to_string(), json!(body));
+    Value::Object(result)
 }
 
 /// Fetch the authenticated user's primary email (for self-dedup in reply-all).
