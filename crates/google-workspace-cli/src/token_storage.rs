@@ -24,14 +24,27 @@ use crate::output::sanitize_for_terminal;
 /// the cached tokens at rest using AES-256-GCM encryption.
 pub struct EncryptedTokenStorage {
     file_path: PathBuf,
+    /// Opaque per-account identifier mixed into cache keys so tokens for
+    /// different accounts (e.g. when switching via
+    /// `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`) never collide on scopes alone.
+    /// Empty string means "no account namespacing" (legacy behavior).
+    account_id: String,
     // Add memory cache since TokenStorage getters can be called frequently
     cache: Arc<Mutex<Option<HashMap<String, TokenInfo>>>>,
 }
 
 impl EncryptedTokenStorage {
     pub fn new(path: PathBuf) -> Self {
+        Self::with_account(path, String::new())
+    }
+
+    /// Like [`EncryptedTokenStorage::new`] but namespaces every cache entry by
+    /// `account_id`, so the same cache file can hold tokens for multiple
+    /// accounts without one account's token being served for another.
+    pub fn with_account(path: PathBuf, account_id: String) -> Self {
         Self {
             file_path: path,
+            account_id,
             cache: Arc::new(Mutex::new(None)),
         }
     }
@@ -110,12 +123,19 @@ impl EncryptedTokenStorage {
         Ok(())
     }
 
-    // Helper to join scopes consistently for cache keys
-    fn cache_key(scopes: &[&str]) -> String {
+    // Helper to join scopes consistently for cache keys, namespaced by account.
+    fn cache_key(&self, scopes: &[&str]) -> String {
         let mut s: Vec<&str> = scopes.to_vec();
         s.sort_unstable();
         s.dedup();
-        s.join(" ")
+        let scope_part = s.join(" ");
+        if self.account_id.is_empty() {
+            scope_part
+        } else {
+            // Unit separator (0x1f) can't appear in scope URLs, so the account
+            // prefix never collides with scope content.
+            format!("{}\u{1f}{}", self.account_id, scope_part)
+        }
     }
 }
 
@@ -130,7 +150,7 @@ impl TokenStorage for EncryptedTokenStorage {
         }
 
         if let Some(map) = map_lock.as_mut() {
-            map.insert(Self::cache_key(scopes), token);
+            map.insert(self.cache_key(scopes), token);
             self.save_to_disk(map)
                 .await
                 .map_err(|e| TokenStorageError::Other(std::borrow::Cow::Owned(e.to_string())))?;
@@ -147,7 +167,7 @@ impl TokenStorage for EncryptedTokenStorage {
         }
 
         if let Some(map) = map_lock.as_ref() {
-            let key = Self::cache_key(scopes);
+            let key = self.cache_key(scopes);
             if let Some(token) = map.get(&key) {
                 return Some(token.clone());
             }
@@ -168,8 +188,61 @@ mod tests {
         let storage = EncryptedTokenStorage::new(path.clone());
 
         assert_eq!(storage.file_path, path);
+        assert!(storage.account_id.is_empty());
 
         let cache_lock = storage.cache.lock().await;
         assert!(cache_lock.is_none());
+    }
+
+    #[test]
+    fn test_cache_key_without_account_is_scopes_only() {
+        let storage = EncryptedTokenStorage::new(PathBuf::from("/x"));
+        let key = storage.cache_key(&["b.scope", "a.scope"]);
+        // Sorted, deduped, space-joined, no account prefix.
+        assert_eq!(key, "a.scope b.scope");
+    }
+
+    #[test]
+    fn test_cache_key_namespaced_by_account() {
+        let scopes = ["https://www.googleapis.com/auth/gmail.readonly"];
+        let a = EncryptedTokenStorage::with_account(PathBuf::from("/x"), "acct-a".to_string());
+        let b = EncryptedTokenStorage::with_account(PathBuf::from("/x"), "acct-b".to_string());
+        let key_a = a.cache_key(&scopes);
+        let key_b = b.cache_key(&scopes);
+
+        // Same scopes, different accounts → distinct cache keys (upstream #572).
+        assert_ne!(key_a, key_b);
+        assert!(key_a.starts_with("acct-a"));
+        assert!(key_a.ends_with(scopes[0]));
+    }
+
+    #[tokio::test]
+    async fn test_account_namespacing_isolates_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_path = dir.path().join("token_cache.json");
+        let scopes = ["https://www.googleapis.com/auth/gmail.readonly"];
+
+        let account_a =
+            EncryptedTokenStorage::with_account(cache_path.clone(), "account-a".to_string());
+        let token = TokenInfo {
+            access_token: Some("token-for-a".to_string()),
+            refresh_token: None,
+            expires_at: None,
+            id_token: None,
+        };
+        account_a.set(&scopes, token).await.unwrap();
+
+        // A fresh storage for a different account, same file + same scopes,
+        // must NOT see account A's token (the #572 regression).
+        let account_b =
+            EncryptedTokenStorage::with_account(cache_path.clone(), "account-b".to_string());
+        assert!(account_b.get(&scopes).await.is_none());
+
+        // The same account still reads its own token back (new instance to
+        // force a fresh disk load rather than reusing the in-memory cache).
+        let account_a_again =
+            EncryptedTokenStorage::with_account(cache_path, "account-a".to_string());
+        let got = account_a_again.get(&scopes).await.unwrap();
+        assert_eq!(got.access_token.as_deref(), Some("token-for-a"));
     }
 }
