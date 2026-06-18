@@ -233,6 +233,36 @@ Register `https://mcp.example.com/gws/oauth/callback` as an **Authorized redirec
 
 The `--public-url` value must not include `/mcp` or `/oauth` paths — those are appended automatically. Trailing slashes are ignored.
 
+## Authentication and profiles (easily confused)
+
+Three auth concepts in `gws` are easy to mix up — especially when switching between multiple accounts/profiles:
+
+| Name | What it is | When it's used |
+|---|---|---|
+| `client_secret.json` | OAuth client-app config (client_id / client_secret; **no** `refresh_token`) | Read by `gws auth login` to run the OAuth flow. Located at `<config_dir>/client_secret.json` |
+| `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | The whole config directory (holds client_secret.json + credentials.enc + token_cache.json) | Switch an entire profile at once |
+| `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | An already-obtained credential (a `refresh_token`-bearing authorized_user, or a service-account key — i.e. the output of `gws auth export`) | Used directly to mint tokens at API-call time. **`auth login` ignores it** |
+
+```bash
+# ✅ Log in and run under a "work" profile (pass it to login AND subsequent commands)
+GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/.config/gws-work gws auth login
+GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/.config/gws-work gws gmail users getProfile --params '{"userId":"me"}'
+
+# ✅ Use CREDENTIALS_FILE only to pass already-exported credentials (refresh_token-bearing)
+gws auth export --unmasked 2>/dev/null > /tmp/work.json
+GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/tmp/work.json gws gmail users getProfile --params '{"userId":"me"}'
+
+# ❌ Don't: pass a client_secret.json to CREDENTIALS_FILE
+#    → wrong type (no refresh_token); auth login ignores this env, and it breaks
+#      subsequent API calls in the same shell
+GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=~/.config/gws-work/client_secret.json gws auth login
+```
+
+Rule of thumb:
+- **`CONFIG_DIR`** = switch the whole folder (use this for profile separation)
+- **`CREDENTIALS_FILE`** = the key itself (pass the output of `gws auth export`)
+- **`client_secret.json`** = app config (for `auth login` only)
+
 ## Upstream MCP issues addressed in this fork
 
 Bug reports and feature requests that targeted upstream's MCP server (closed when MCP was removed). This fork ports the fixes so they remain useful:
