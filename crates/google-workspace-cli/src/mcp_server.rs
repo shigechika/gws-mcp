@@ -718,7 +718,23 @@ async fn handle_gmail_read(arguments: &Value) -> Result<Value, GwsError> {
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
-    crate::helpers::gmail::mcp_read_message(message_id, use_html, include_headers).await
+    let data =
+        crate::helpers::gmail::mcp_read_message(message_id, use_html, include_headers).await?;
+    Ok(json_text_content(&data))
+}
+
+/// Wrap a structured JSON value into an MCP `tools/call` result envelope
+/// (`{ "content": [{ "type": "text", "text": ... }], "isError": false }`).
+///
+/// MCP clients render the `content` array, so a helper that returns a bare data
+/// object shows up as empty output. The data is pretty-printed into the single
+/// text block, matching how `send_raw_gmail` formats its result.
+fn json_text_content(value: &Value) -> Value {
+    let text = serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_string());
+    json!({
+        "content": [{ "type": "text", "text": text }],
+        "isError": false
+    })
 }
 
 fn walk_resources(prefix: &str, resources: &HashMap<String, RestResource>, tools: &mut Vec<Value>) {
@@ -1642,6 +1658,22 @@ mod tests {
         let args = json!({ "html": true });
         let result = handle_gmail_read(&args).await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_text_content_wraps_in_mcp_envelope() {
+        // gmail_read must return the MCP content envelope, not a bare data object,
+        // or clients render it as empty output.
+        let data = json!({ "message_id": "abc", "body": "hello" });
+        let wrapped = json_text_content(&data);
+        assert_eq!(wrapped["isError"], false);
+        let content = wrapped["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "text");
+        // The data is pretty-printed into the text block.
+        let text = content[0]["text"].as_str().unwrap();
+        assert!(text.contains("\"message_id\": \"abc\""));
+        assert!(text.contains("\"body\": \"hello\""));
     }
 
     #[test]
