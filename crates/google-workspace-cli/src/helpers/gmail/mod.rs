@@ -2441,7 +2441,10 @@ mod tests {
         assert_eq!(result["date"], "Thu, 1 Jan 2026 00:00:00 +0000");
         assert_eq!(result["body"], "plain body");
         // From is a single string; To/Cc are arrays.
-        assert!(result["from"].as_str().unwrap().contains("alice@example.com"));
+        assert!(result["from"]
+            .as_str()
+            .unwrap()
+            .contains("alice@example.com"));
         let to = result["to"].as_array().unwrap();
         assert_eq!(to.len(), 2);
         assert!(to[1].as_str().unwrap().contains("carol@example.com"));
