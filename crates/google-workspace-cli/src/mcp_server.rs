@@ -539,7 +539,7 @@ fn append_helper_tools(services: &[String], tools: &mut Vec<Value>) {
         }));
         tools.push(json!({
             "name": "gmail_read",
-            "description": "Read a Gmail message and return its parsed headers and decoded body as compact JSON. Extracts the plain-text body (handling multipart/alternative, base64, and HTML-to-text conversion) instead of the raw API payload, so it avoids flooding the context with MIME boundaries, base64 blobs, and DKIM/ARC headers. Use gmail_users_messages_list to find a message_id.",
+            "description": "Read a Gmail message and return its parsed headers and decoded body as compact JSON. Extracts the plain-text body (handling multipart/alternative, base64, and HTML-to-text conversion) instead of the raw API payload, so it avoids flooding the context with MIME boundaries, base64 blobs, and DKIM/ARC headers. Use gmail_users_messages_list or gmail_users_threads_list to find a message_id.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
