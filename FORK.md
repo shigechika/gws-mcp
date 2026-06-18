@@ -39,6 +39,7 @@ Enabled with the `--helpers` flag. These provide high-level operations on top of
 |---|---|
 | `gmail_send` | Send email. Just pass to/subject/body — RFC 2822 formatting and base64url encoding are handled automatically |
 | `gmail_reply` | Reply within a thread. Pass message_id/body — In-Reply-To, References, Re: subject, and threadId are set automatically |
+| `gmail_read` | Read a message. Pass message_id — returns parsed headers and the decoded plain-text body as compact JSON, skipping the raw MIME/base64 payload |
 
 ## Installation
 
@@ -251,6 +252,7 @@ Bug reports and feature requests that targeted upstream's MCP server (closed whe
 | [#644](https://github.com/googleworkspace/cli/issues/644) — `gmail +send` prints "grant profile scope" tip and sends with null From name even when `userinfo.profile` is granted | Fixed | Switched display-name lookup in `helpers/gmail/mod.rs` from People API (`/people/me?personFields=names`) to the OIDC userinfo endpoint (`openidconnect.googleapis.com/v1/userinfo`), which accepts the same scope and responds consistently across Workspace and personal Gmail accounts. Reworded the 401/403 fallback so it doesn't misdiagnose a transient permission denial as a missing scope |
 | [#769](https://github.com/googleworkspace/cli/issues/769) — `+reply` (plain text) corrupts quoted parent when hard-wrapped lines push prefixed lines past 76 chars | Fixed | Pre-wrap quoted body lines to 73 chars before adding `> ` prefix so no line exceeds 75 chars after prefixing, preventing quoted-printable soft-wrap from injecting spurious `> ` mid-sentence (`helpers/gmail/reply.rs`) |
 | [#774](https://github.com/googleworkspace/cli/issues/774) — Gmail attachments get: unpadded base64url data breaks standard decoders | Fixed | Switched body/attachment decoders to `URL_SAFE_NO_PAD` with `.trim_end_matches('=')` so both padded and unpadded base64url input are accepted (`helpers/gmail/mod.rs`) |
+| [#438](https://github.com/googleworkspace/cli/issues/438) — No helper to extract a Gmail message body as plain text (agents must parse the raw 10–60 KB API payload) | Fixed | The `gmail +read` CLI helper extracts the body; now also exposed as the `gmail_read` MCP helper tool so agents get parsed headers + decoded body as compact JSON instead of the raw MIME payload (`mcp_server.rs`, `helpers/gmail/mod.rs`) |
 
 ## Upstream MCP timeline
 

@@ -4254,6 +4254,63 @@ pub(crate) fn mcp_build_send_metadata(thread_id: Option<&str>, draft: bool) -> O
     build_send_metadata(thread_id, draft)
 }
 
+/// MCP-facing helper mirroring the `+read` CLI command: fetch a Gmail message
+/// and return a compact JSON object with the parsed headers and the decoded
+/// body. Defaults to the `text/plain` body (falling back to the snippet) and
+/// switches to the HTML body when `use_html` is set. Keeps the heavy raw API
+/// payload (MIME parts, base64 blobs, DKIM/ARC headers) out of the agent's
+/// context window — the motivation behind upstream googleworkspace/cli#438.
+pub(crate) async fn mcp_read_message(
+    message_id: &str,
+    use_html: bool,
+    include_headers: bool,
+) -> Result<Value, GwsError> {
+    let token = auth::get_token(&[GMAIL_READONLY_SCOPE])
+        .await
+        .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
+    let client = crate::client::build_client()?;
+    let original = fetch_message_metadata(&client, &token, message_id).await?;
+
+    let body = if use_html {
+        original
+            .body_html
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(&original.body_text)
+    } else {
+        original.body_text.as_str()
+    };
+
+    let mut result = serde_json::Map::new();
+    result.insert("message_id".to_string(), json!(original.message_id));
+    if let Some(thread_id) = &original.thread_id {
+        result.insert("thread_id".to_string(), json!(thread_id));
+    }
+    if include_headers {
+        result.insert("from".to_string(), json!(original.from.to_string()));
+        result.insert(
+            "to".to_string(),
+            json!(original
+                .to
+                .iter()
+                .map(|m| m.to_string())
+                .collect::<Vec<_>>()),
+        );
+        if let Some(cc) = &original.cc {
+            result.insert(
+                "cc".to_string(),
+                json!(cc.iter().map(|m| m.to_string()).collect::<Vec<_>>()),
+            );
+        }
+        result.insert("subject".to_string(), json!(original.subject));
+        if let Some(date) = &original.date {
+            result.insert("date".to_string(), json!(date));
+        }
+    }
+    result.insert("body".to_string(), json!(body));
+    Ok(Value::Object(result))
+}
+
 /// Fetch the authenticated user's primary email (for self-dedup in reply-all).
 async fn fetch_self_email(client: &reqwest::Client, token: &str) -> Result<String, GwsError> {
     let resp = crate::client::send_with_retry(|| {
