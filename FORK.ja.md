@@ -232,6 +232,36 @@ mcp.example.com {
 
 `--public-url` には `/mcp` や `/oauth` パスを含めないでください — これらのパスは自動的に付加されます。末尾のスラッシュは無視されます。
 
+## 認証とプロファイル（混同注意）
+
+`gws` の認証まわりで紛らわしい3つを整理します。特に複数アカウント/プロファイルを切り替えるときに混同しやすいので注意してください。
+
+| 名前 | 中身 | 使われる場面 |
+|---|---|---|
+| `client_secret.json` | OAuth クライアントアプリ設定（client_id / client_secret、`refresh_token` は**無い**） | `gws auth login` が OAuth フローを回すために読む。場所は `<config_dir>/client_secret.json` |
+| `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | 設定ディレクトリ全体（client_secret.json・credentials.enc・token_cache.json を内包） | プロファイルごと丸ごと切り替える |
+| `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | 取得済み資格情報（`refresh_token` 入りの authorized_user、または SA キー＝`gws auth export` の出力） | API 呼び出し時にトークン化に直接使う。**`auth login` は読まない** |
+
+```bash
+# ✅ work プロファイルでログイン＆運用（login と後続コマンド両方に付ける）
+GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/.config/gws-work gws auth login
+GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/.config/gws-work gws gmail users getProfile --params '{"userId":"me"}'
+
+# ✅ CREDENTIALS_FILE を使うのは「export 済み資格情報」を渡すときだけ（refresh_token 入り）
+gws auth export --unmasked 2>/dev/null > /tmp/work.json
+GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/tmp/work.json gws gmail users getProfile --params '{"userId":"me"}'
+
+# ❌ やらない: client_secret.json を CREDENTIALS_FILE に渡す
+#    → 型違い（refresh_token なし）。auth login はこの env を無視し、
+#      さらに同じシェルの後続 API 呼び出しが壊れる
+GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=~/.config/gws-work/client_secret.json gws auth login
+```
+
+覚え方:
+- **`CONFIG_DIR`** = フォルダごと切り替え（プロファイル分離はこれ）
+- **`CREDENTIALS_FILE`** = 鍵そのもの（`gws auth export` の出力を渡す）
+- **`client_secret.json`** = アプリ設定（`auth login` 専用）
+
 ## このフォークで対応した upstream の MCP issue
 
 upstream の MCP サーバーに対するバグ報告・機能要望（MCP 削除に伴い close されたもの）を、このフォークで移植・対応しています。
