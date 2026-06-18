@@ -262,6 +262,12 @@ GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=~/.config/gws-work/client_secret.json gws 
 - **`CREDENTIALS_FILE`** = 鍵そのもの（`gws auth export` の出力を渡す）
 - **`client_secret.json`** = アプリ設定（`auth login` 専用）
 
+> **keyring backend も揃える。** `credentials.enc` を暗号化する AES 鍵は、OS キーリング（既定）か、ローカルの `.encryption_key` ファイル（`GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file`。MCP サーバーなどヘッドレス用途で推奨）に保存されます。**`auth login` と、その認証情報を使う側（MCP サーバー等）は同じ backend を使う必要があります。** 食い違うと、使う側が `credentials.enc` を復号できず「壊れている」と判断して削除し、黙って ADC（`GOOGLE_APPLICATION_CREDENTIALS`）にフォールバックします（たいてい `insufficient authentication scopes` として表面化）。MCP サーバーが `KEYRING_BACKEND=file` で動くなら、ログインも同じく付けます:
+>
+> ```bash
+> GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/.config/gws-work GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file gws auth login
+> ```
+
 ## このフォークで対応した upstream の MCP issue
 
 upstream の MCP サーバーに対するバグ報告・機能要望（MCP 削除に伴い close されたもの）を、このフォークで移植・対応しています。

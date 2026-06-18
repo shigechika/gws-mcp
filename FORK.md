@@ -263,6 +263,12 @@ Rule of thumb:
 - **`CREDENTIALS_FILE`** = the key itself (pass the output of `gws auth export`)
 - **`client_secret.json`** = app config (for `auth login` only)
 
+> **Keep the keyring backend consistent too.** The AES key that encrypts `credentials.enc` is stored either in the OS keyring (default) or in a local `.encryption_key` file (`GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file` — recommended for headless consumers like the MCP server). **`auth login` and whatever consumes the credentials must use the same backend.** If they differ, the consumer can't decrypt `credentials.enc`, deletes it as corrupt, and silently falls back to ADC (`GOOGLE_APPLICATION_CREDENTIALS`) — which usually surfaces as `insufficient authentication scopes`. So if your MCP server runs with `KEYRING_BACKEND=file`, log in the same way:
+>
+> ```bash
+> GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/.config/gws-work GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file gws auth login
+> ```
+
 ## Upstream MCP issues addressed in this fork
 
 Bug reports and feature requests that targeted upstream's MCP server (closed when MCP was removed). This fork ports the fixes so they remain useful:
