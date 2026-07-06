@@ -61,13 +61,14 @@ Check every diff that builds a URL against it:
   `crate::validate::validate_resource_name()` before being embedded anywhere.
 - If a diff touches `crate::validate::encode_path_segment`,
   `validate_resource_name`, or any other function in `validate.rs`: grep for
-  **every** caller (there are ~7 across `executor.rs`, `helpers/gmail/`,
-  `helpers/calendar.rs`, `helpers/workflows.rs`, `helpers/modelarmor.rs`) and
-  check each one still gets the behavior it relies on — these are shared,
-  security-sensitive utilities, not single-use helpers. A change that's
-  correct for the file it's in can still break a different caller with a
-  different usage pattern (e.g. a path-segment encoder reused for a query
-  value).
+  **every** caller across `crates/` (there are call sites scattered across
+  `executor.rs`, `discovery.rs`, and multiple files under `helpers/` —
+  don't trust a fixed list, re-grep each time, since new helpers add new
+  callers) and check each one still gets the behavior it relies on — these
+  are shared, security-sensitive utilities, not single-use helpers. A
+  change that's correct for the file it's in can still break a different
+  caller with a different usage pattern (e.g. a path-segment encoder reused
+  for a query value).
 
 ## 2. Fork-vs-upstream discipline
 
@@ -146,11 +147,12 @@ silent auth failures are worse than loud ones. When a diff touches `auth.rs`,
 
 ## 6. Bilingual docs must move together
 
-Where a `.ja.md` counterpart exists (`README.md`/`README.ja.md`,
-`FORK.md`/`FORK.ja.md`), a diff that updates one should update the other in
-the same PR, not as a follow-up. Flag a PR that changes only the English or
-only the Japanese side of a pair when the change isn't purely
-language-specific (e.g. a new CLI flag, a new table row, a new section).
+Where a `.ja.md` counterpart exists (currently `FORK.md`/`FORK.ja.md`; check
+for others before assuming this list is complete), a diff that updates one
+should update the other in the same PR, not as a follow-up. Flag a PR that
+changes only the English or only the Japanese side of a pair when the
+change isn't purely language-specific (e.g. a new CLI flag, a new table
+row, a new section).
 
 # Out of scope for review comments
 
