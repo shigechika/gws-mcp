@@ -671,10 +671,10 @@ mod parsing_tests {
             body: "{}".to_string(),
         };
         let url = build_create_template_url(&config);
-        // encode_path_segment encodes hyphens ('-' → '%2D')
+        // '-' is RFC 3986 unreserved, so encode_path_segment leaves it intact.
         assert_eq!(
             url,
-            "https://modelarmor.us-central1.rep.googleapis.com/v1/projects/p/locations/us%2Dcentral1/templates?templateId=t"
+            "https://modelarmor.us-central1.rep.googleapis.com/v1/projects/p/locations/us-central1/templates?templateId=t"
         );
     }
 
@@ -751,15 +751,16 @@ mod parsing_tests {
     #[test]
     fn test_build_create_template_url_encodes_segments() {
         let config = CreateTemplateConfig {
-            project: "my-project".to_string(),
+            project: "my project".to_string(),
             location: "us-central1".to_string(),
-            template_id: "my-template".to_string(),
+            template_id: "my template".to_string(),
             body: "{}".to_string(),
         };
         let url = build_create_template_url(&config);
-        assert!(url.contains("projects/my%2Dproject"));
-        assert!(url.contains("locations/us%2Dcentral1"));
-        assert!(url.contains("templateId=my%2Dtemplate"));
+        // Spaces are encoded; hyphens (RFC 3986 unreserved) are left intact.
+        assert!(url.contains("projects/my%20project"));
+        assert!(url.contains("locations/us-central1"));
+        assert!(url.contains("templateId=my%20template"));
     }
 
     #[test]

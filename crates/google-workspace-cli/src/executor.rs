@@ -1729,7 +1729,7 @@ mod tests {
         let (url, _) = build_url(&doc, &method, &params, false).unwrap();
         assert_eq!(
             url,
-            "https://api.example.com/spreadsheets/abc123/values/hash%231%21A1%3AB2"
+            "https://api.example.com/spreadsheets/abc123/values/hash%231!A1%3AB2"
         );
     }
 
@@ -1878,7 +1878,7 @@ mod tests {
         let (url, _) = build_url(&doc, &method, &params, false).unwrap();
         assert_eq!(
             url,
-            "https://api.example.com/v1/literal%2D%7Bchild%7D%2Dvalue/ok"
+            "https://api.example.com/v1/literal-%7Bchild%7D-value/ok"
         );
     }
 
