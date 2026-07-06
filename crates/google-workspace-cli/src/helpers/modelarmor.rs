@@ -366,6 +366,45 @@ fn parse_create_template_args(matches: &ArgMatches) -> Result<CreateTemplateConf
     })
 }
 
+/// Percent-encode a value for use as a query parameter value in a URL built
+/// by string formatting (rather than a `.query()` builder). `encode_path_segment`
+/// is NOT safe here: `&` and `+` are legal in a bare path segment (so it
+/// leaves them intact), but both are structurally significant in a query
+/// string — an unencoded `&` splits the value into two parameters, and `+` is
+/// commonly decoded server-side as a space. This mirrors
+/// `validate::encode_path_segment`'s encode set plus those two extra bytes
+/// (duplicated rather than shared, so that function can stay a byte-for-byte
+/// match with the equivalent upstream fix).
+fn encode_query_value(s: &str) -> String {
+    use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+
+    const QUERY_VALUE_ENCODE_SET: &AsciiSet = &CONTROLS
+        .add(b' ')
+        .add(b'"')
+        .add(b'#')
+        .add(b'%')
+        .add(b'&')
+        .add(b'+')
+        .add(b'<')
+        .add(b'>')
+        .add(b'?')
+        .add(b'`')
+        .add(b'{')
+        .add(b'}')
+        .add(b'/')
+        .add(b':')
+        .add(b';')
+        .add(b'=')
+        .add(b'@')
+        .add(b'[')
+        .add(b'\\')
+        .add(b']')
+        .add(b'^')
+        .add(b'|');
+
+    utf8_percent_encode(s, QUERY_VALUE_ENCODE_SET).to_string()
+}
+
 pub fn build_create_template_url(config: &CreateTemplateConfig) -> String {
     let base = regional_base_url(&config.location);
     let project = crate::validate::encode_path_segment(&config.project);
@@ -373,7 +412,7 @@ pub fn build_create_template_url(config: &CreateTemplateConfig) -> String {
     let parent = format!("projects/{project}/locations/{location}");
     format!(
         "{base}/{parent}/templates?templateId={}",
-        crate::validate::encode_path_segment(&config.template_id)
+        encode_query_value(&config.template_id)
     )
 }
 
@@ -761,6 +800,24 @@ mod parsing_tests {
         assert!(url.contains("projects/my%20project"));
         assert!(url.contains("locations/us-central1"));
         assert!(url.contains("templateId=my%20template"));
+    }
+
+    #[test]
+    fn test_build_create_template_url_encodes_query_delimiters_in_template_id() {
+        // Regression test: template_id lands in a query string built by raw
+        // string formatting, not a `.query()` builder. `encode_path_segment`
+        // deliberately leaves `&`/`+` intact (they're legal in a bare path
+        // segment), so using it here would let `&` split templateId into two
+        // query parameters, and `+` would be decoded server-side as a space.
+        let config = CreateTemplateConfig {
+            project: "p".to_string(),
+            location: "us-central1".to_string(),
+            template_id: "my&extra+id".to_string(),
+            body: "{}".to_string(),
+        };
+        let url = build_create_template_url(&config);
+        assert!(url.contains("templateId=my%26extra%2Bid"));
+        assert!(!url.contains("templateId=my&extra"));
     }
 
     #[test]
