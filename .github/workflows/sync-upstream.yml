@@ -13,9 +13,17 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
+      # GITHUB_TOKEN cannot create/update files under .github/workflows/* (no
+      # `workflows` permission scope exists for it). Upstream regularly touches
+      # its own workflow files, so pushing a merge commit with GITHUB_TOKEN
+      # gets rejected the moment that diff includes one. SYNC_UPSTREAM_PAT
+      # must be a PAT (fine-grained: Contents + Workflows + Pull requests,
+      # read/write) with access to this repo. Falls back to GITHUB_TOKEN if
+      # unset, which works fine as long as no workflow file is touched.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          token: ${{ secrets.SYNC_UPSTREAM_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Configure git
         run: |
@@ -115,7 +123,7 @@ jobs:
           EOF
           )"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_UPSTREAM_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Create PR (conflict)
         if: steps.check.outputs.count != '0' && steps.merge.outputs.conflict == 'true'
@@ -136,4 +144,4 @@ jobs:
           EOF
           )"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_UPSTREAM_PAT || secrets.GITHUB_TOKEN }}
