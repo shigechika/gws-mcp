@@ -133,6 +133,39 @@ enum Credential {
     ServiceAccount(yup_oauth2::ServiceAccountKey),
 }
 
+/// Stable, non-reversible identifier for the account behind a credential.
+///
+/// Mixed into token-cache keys so that switching accounts (e.g. via
+/// `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`) never serves a cached token that
+/// was minted for a different account but the same scopes (upstream
+/// googleworkspace/cli#572). Returns a short hex SHA-256 prefix — the
+/// underlying secrets (refresh token, private key id) are never stored in the
+/// cache in recoverable form.
+fn account_fingerprint(creds: &Credential) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    match creds {
+        Credential::AuthorizedUser(secret) => {
+            hasher.update(b"user\0");
+            hasher.update(secret.client_id.as_bytes());
+            hasher.update(b"\0");
+            hasher.update(secret.refresh_token.as_bytes());
+        }
+        Credential::ServiceAccount(key) => {
+            hasher.update(b"sa\0");
+            hasher.update(key.client_email.as_bytes());
+            if let Some(id) = key.private_key_id.as_deref() {
+                hasher.update(b"\0");
+                hasher.update(id.as_bytes());
+            }
+        }
+    }
+    let digest = hasher.finalize();
+    // 8 bytes (16 hex chars) is ample to avoid collisions between a handful of
+    // accounts while keeping the cache key compact.
+    digest[..8].iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Fetches access tokens for a fixed set of scopes.
 ///
 /// Long-running helpers use this trait so they can request a fresh token before
@@ -245,6 +278,7 @@ async fn get_token_inner(
     creds: Credential,
     token_cache_path: &std::path::Path,
 ) -> anyhow::Result<String> {
+    let fingerprint = account_fingerprint(&creds);
     match creds {
         Credential::AuthorizedUser(ref secret) => {
             // If proxy env vars are set, use reqwest directly (it supports proxy)
@@ -260,9 +294,12 @@ async fn get_token_inner(
 
             // No proxy - use yup-oauth2 (faster, has token caching)
             let auth = yup_oauth2::AuthorizedUserAuthenticator::builder(secret.clone())
-                .with_storage(Box::new(crate::token_storage::EncryptedTokenStorage::new(
-                    token_cache_path.to_path_buf(),
-                )))
+                .with_storage(Box::new(
+                    crate::token_storage::EncryptedTokenStorage::with_account(
+                        token_cache_path.to_path_buf(),
+                        fingerprint,
+                    ),
+                ))
                 .build()
                 .await
                 .context("Failed to build authorized user authenticator")?;
@@ -280,7 +317,10 @@ async fn get_token_inner(
                 .unwrap_or_else(|| "token_cache.json".to_string());
             let sa_cache = token_cache_path.with_file_name(format!("sa_{tc_filename}"));
             let builder = yup_oauth2::ServiceAccountAuthenticator::builder(key).with_storage(
-                Box::new(crate::token_storage::EncryptedTokenStorage::new(sa_cache)),
+                Box::new(crate::token_storage::EncryptedTokenStorage::with_account(
+                    sa_cache,
+                    fingerprint,
+                )),
             );
 
             let auth = builder
@@ -925,6 +965,30 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("No credentials found"));
+    }
+
+    fn authorized_user(client_id: &str, refresh_token: &str) -> Credential {
+        let json = format!(
+            r#"{{"client_id":"{client_id}","client_secret":"s","refresh_token":"{refresh_token}","type":"authorized_user"}}"#
+        );
+        Credential::AuthorizedUser(serde_json::from_str(&json).unwrap())
+    }
+
+    #[test]
+    fn test_account_fingerprint_stable_for_same_account() {
+        let a = account_fingerprint(&authorized_user("cid", "rt-1"));
+        let b = account_fingerprint(&authorized_user("cid", "rt-1"));
+        assert_eq!(a, b);
+        // 8 bytes rendered as hex.
+        assert_eq!(a.len(), 16);
+    }
+
+    #[test]
+    fn test_account_fingerprint_differs_across_accounts() {
+        // Different refresh token (same client) => different account (upstream #572).
+        let a = account_fingerprint(&authorized_user("cid", "rt-1"));
+        let b = account_fingerprint(&authorized_user("cid", "rt-2"));
+        assert_ne!(a, b);
     }
 
     #[test]

@@ -676,7 +676,7 @@ mod tests {
                         })
                         .to_string()
                     }
-                    "/gmail/v1/users/me/messages/msg%2D1?format=full" => {
+                    "/gmail/v1/users/me/messages/msg-1?format=full" => {
                         json!({ "id": "msg-1" }).to_string()
                     }
                     "/v1/projects/test/subscriptions/demo:acknowledge" => json!({}).to_string(),
@@ -980,7 +980,7 @@ mod tests {
         assert_eq!(requests[1].1, "authorization: Bearer gmail-token");
         assert_eq!(
             requests[2].0,
-            "/gmail/v1/users/me/messages/msg%2D1?format=full"
+            "/gmail/v1/users/me/messages/msg-1?format=full"
         );
         assert_eq!(requests[2].1, "authorization: Bearer gmail-token");
         assert_eq!(

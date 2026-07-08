@@ -537,6 +537,33 @@ fn append_helper_tools(services: &[String], tools: &mut Vec<Value>) {
                 "idempotentHint": false,
             }
         }));
+        tools.push(json!({
+            "name": "gmail_read",
+            "description": "Read a Gmail message and return its parsed headers and decoded body as compact JSON. Extracts the plain-text body (handling multipart/alternative, base64, and HTML-to-text conversion) instead of the raw API payload, so it avoids flooding the context with MIME boundaries, base64 blobs, and DKIM/ARC headers. Use gmail_users_messages_list or gmail_users_threads_list to find a message_id.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "message_id": {
+                        "type": "string",
+                        "description": "Gmail message ID to read"
+                    },
+                    "html": {
+                        "type": "boolean",
+                        "description": "Return the HTML body instead of plain text (default: false)"
+                    },
+                    "include_headers": {
+                        "type": "boolean",
+                        "description": "Include From/To/Cc/Subject/Date headers in the output (default: true)"
+                    }
+                },
+                "required": ["message_id"]
+            },
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true,
+            }
+        }));
     }
 }
 
@@ -678,6 +705,36 @@ async fn handle_gmail_reply(arguments: &Value) -> Result<Value, GwsError> {
     .await?;
 
     send_raw_gmail(&raw_message, thread_id.as_deref(), false).await
+}
+
+async fn handle_gmail_read(arguments: &Value) -> Result<Value, GwsError> {
+    let message_id = get_required_str(arguments, "message_id")?;
+    let use_html = arguments
+        .get("html")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let include_headers = arguments
+        .get("include_headers")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let data =
+        crate::helpers::gmail::mcp_read_message(message_id, use_html, include_headers).await?;
+    Ok(json_text_content(&data))
+}
+
+/// Wrap a structured JSON value into an MCP `tools/call` result envelope
+/// (`{ "content": [{ "type": "text", "text": ... }], "isError": false }`).
+///
+/// MCP clients render the `content` array, so a helper that returns a bare data
+/// object shows up as empty output. The data is pretty-printed into the single
+/// text block, matching how `send_raw_gmail` formats its result.
+fn json_text_content(value: &Value) -> Value {
+    let text = serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_string());
+    json!({
+        "content": [{ "type": "text", "text": text }],
+        "isError": false
+    })
 }
 
 fn walk_resources(prefix: &str, resources: &HashMap<String, RestResource>, tools: &mut Vec<Value>) {
@@ -973,6 +1030,7 @@ pub(crate) async fn handle_tools_call(
     let helper_result = match tool_name {
         "gmail_send" => Some(handle_gmail_send(arguments).await),
         "gmail_reply" => Some(handle_gmail_reply(arguments).await),
+        "gmail_read" => Some(handle_gmail_read(arguments).await),
         _ => None,
     };
     if let Some(result) = helper_result {
@@ -1554,13 +1612,14 @@ mod tests {
     }
 
     #[test]
-    fn test_append_helper_tools_gmail_adds_send_and_reply() {
+    fn test_append_helper_tools_gmail_adds_send_reply_read() {
         let services = vec!["gmail".to_string()];
         let mut tools = Vec::new();
         append_helper_tools(&services, &mut tools);
-        assert_eq!(tools.len(), 2);
+        assert_eq!(tools.len(), 3);
         assert_eq!(tools[0]["name"], "gmail_send");
         assert_eq!(tools[1]["name"], "gmail_reply");
+        assert_eq!(tools[2]["name"], "gmail_read");
 
         let schema = &tools[0]["inputSchema"];
         let required = schema["required"].as_array().unwrap();
@@ -1572,6 +1631,49 @@ mod tests {
         let props = schema["properties"].as_object().unwrap();
         assert!(props.contains_key("cc"));
         assert!(props.contains_key("bcc"));
+    }
+
+    #[test]
+    fn test_append_helper_tools_gmail_read_schema() {
+        let services = vec!["gmail".to_string()];
+        let mut tools = Vec::new();
+        append_helper_tools(&services, &mut tools);
+        let read_tool = tools.iter().find(|t| t["name"] == "gmail_read").unwrap();
+
+        let schema = &read_tool["inputSchema"];
+        let required = schema["required"].as_array().unwrap();
+        let required_strs: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(required_strs, vec!["message_id"]);
+
+        let props = schema["properties"].as_object().unwrap();
+        assert!(props.contains_key("html"));
+        assert!(props.contains_key("include_headers"));
+
+        // Reading a message must be advertised as a non-destructive, read-only op.
+        assert_eq!(read_tool["annotations"]["readOnlyHint"], true);
+    }
+
+    #[tokio::test]
+    async fn test_handle_gmail_read_missing_message_id() {
+        let args = json!({ "html": true });
+        let result = handle_gmail_read(&args).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_text_content_wraps_in_mcp_envelope() {
+        // gmail_read must return the MCP content envelope, not a bare data object,
+        // or clients render it as empty output.
+        let data = json!({ "message_id": "abc", "body": "hello" });
+        let wrapped = json_text_content(&data);
+        assert_eq!(wrapped["isError"], false);
+        let content = wrapped["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "text");
+        // The data is pretty-printed into the text block.
+        let text = content[0]["text"].as_str().unwrap();
+        assert!(text.contains("\"message_id\": \"abc\""));
+        assert!(text.contains("\"body\": \"hello\""));
     }
 
     #[test]

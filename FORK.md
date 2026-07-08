@@ -39,6 +39,7 @@ Enabled with the `--helpers` flag. These provide high-level operations on top of
 |---|---|
 | `gmail_send` | Send email. Just pass to/subject/body — RFC 2822 formatting and base64url encoding are handled automatically |
 | `gmail_reply` | Reply within a thread. Pass message_id/body — In-Reply-To, References, Re: subject, and threadId are set automatically |
+| `gmail_read` | Read a message. Pass message_id — returns parsed headers and the decoded plain-text body as compact JSON, skipping the raw MIME/base64 payload |
 
 ## Installation
 
@@ -232,6 +233,42 @@ Register `https://mcp.example.com/gws/oauth/callback` as an **Authorized redirec
 
 The `--public-url` value must not include `/mcp` or `/oauth` paths — those are appended automatically. Trailing slashes are ignored.
 
+## Authentication and profiles (easily confused)
+
+Three auth concepts in `gws` are easy to mix up — especially when switching between multiple accounts/profiles:
+
+| Name | What it is | When it's used |
+|---|---|---|
+| `client_secret.json` | OAuth client-app config (client_id / client_secret; **no** `refresh_token`) | Read by `gws auth login` to run the OAuth flow. Located at `<config_dir>/client_secret.json` |
+| `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | The whole config directory (holds client_secret.json + credentials.enc + token_cache.json) | Switch an entire profile at once |
+| `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | An already-obtained credential (a `refresh_token`-bearing authorized_user, or a service-account key — i.e. the output of `gws auth export`) | Used directly to mint tokens at API-call time. **`auth login` ignores it** |
+
+```bash
+# ✅ Log in and run under a "work" profile (pass it to login AND subsequent commands)
+GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/.config/gws-work gws auth login
+GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/.config/gws-work gws gmail users getProfile --params '{"userId":"me"}'
+
+# ✅ Use CREDENTIALS_FILE only to pass already-exported credentials (refresh_token-bearing)
+gws auth export --unmasked 2>/dev/null > /tmp/work.json
+GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/tmp/work.json gws gmail users getProfile --params '{"userId":"me"}'
+
+# ❌ Don't: pass a client_secret.json to CREDENTIALS_FILE
+#    → wrong type (no refresh_token); auth login ignores this env, and it breaks
+#      subsequent API calls in the same shell
+GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=~/.config/gws-work/client_secret.json gws auth login
+```
+
+Rule of thumb:
+- **`CONFIG_DIR`** = switch the whole folder (use this for profile separation)
+- **`CREDENTIALS_FILE`** = the key itself (pass the output of `gws auth export`)
+- **`client_secret.json`** = app config (for `auth login` only)
+
+> **Keep the keyring backend consistent too.** The AES key that encrypts `credentials.enc` is stored either in the OS keyring (default) or in a local `.encryption_key` file (`GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file` — recommended for headless consumers like the MCP server). **`auth login` and whatever consumes the credentials must use the same backend.** If they differ, the consumer can't decrypt `credentials.enc`, deletes it as corrupt, and silently falls back to ADC (`GOOGLE_APPLICATION_CREDENTIALS`) — which usually surfaces as `insufficient authentication scopes`. So if your MCP server runs with `KEYRING_BACKEND=file`, log in the same way:
+>
+> ```bash
+> GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/.config/gws-work GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file gws auth login
+> ```
+
 ## Upstream MCP issues addressed in this fork
 
 Bug reports and feature requests that targeted upstream's MCP server (closed when MCP was removed). This fork ports the fixes so they remain useful:
@@ -251,6 +288,8 @@ Bug reports and feature requests that targeted upstream's MCP server (closed whe
 | [#644](https://github.com/googleworkspace/cli/issues/644) — `gmail +send` prints "grant profile scope" tip and sends with null From name even when `userinfo.profile` is granted | Fixed | Switched display-name lookup in `helpers/gmail/mod.rs` from People API (`/people/me?personFields=names`) to the OIDC userinfo endpoint (`openidconnect.googleapis.com/v1/userinfo`), which accepts the same scope and responds consistently across Workspace and personal Gmail accounts. Reworded the 401/403 fallback so it doesn't misdiagnose a transient permission denial as a missing scope |
 | [#769](https://github.com/googleworkspace/cli/issues/769) — `+reply` (plain text) corrupts quoted parent when hard-wrapped lines push prefixed lines past 76 chars | Fixed | Pre-wrap quoted body lines to 73 chars before adding `> ` prefix so no line exceeds 75 chars after prefixing, preventing quoted-printable soft-wrap from injecting spurious `> ` mid-sentence (`helpers/gmail/reply.rs`) |
 | [#774](https://github.com/googleworkspace/cli/issues/774) — Gmail attachments get: unpadded base64url data breaks standard decoders | Fixed | Switched body/attachment decoders to `URL_SAFE_NO_PAD` with `.trim_end_matches('=')` so both padded and unpadded base64url input are accepted (`helpers/gmail/mod.rs`) |
+| [#438](https://github.com/googleworkspace/cli/issues/438) — No helper to extract a Gmail message body as plain text (agents must parse the raw 10–60 KB API payload) | Fixed | The `gmail +read` CLI helper extracts the body; now also exposed as the `gmail_read` MCP helper tool so agents get parsed headers + decoded body as compact JSON instead of the raw MIME payload (`mcp_server.rs`, `helpers/gmail/mod.rs`) |
+| [#572](https://github.com/googleworkspace/cli/issues/572) — Token cache ignores `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` when switching accounts (returns the previous account's token for the same scopes) | Fixed | `EncryptedTokenStorage` namespaces each cache entry by a non-reversible account fingerprint (short SHA-256 over refresh token / service-account identity) in addition to scopes, so tokens for different accounts no longer collide (`token_storage.rs`, `auth.rs`) |
 
 ## Upstream MCP timeline
 
