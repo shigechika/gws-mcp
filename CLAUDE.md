@@ -22,6 +22,7 @@ After merging upstream/main, fix MCP compilation errors:
 
 ### GitHub Actions
 
-- Only 3 workflows exist: `ci.yml`, `policy.yml`, `sync-upstream.yml`
+- Fork workflows (verify with `gh api repos/<owner>/<repo>/actions/workflows`, as this list grows over time): `ci.yml`, `policy.yml`, `sync-upstream.yml`, `audit.yml`, `generate-skills.yml`, `auto-tag.yml`, `release-fork.yml`
 - `gh workflow list` may show upstream workflows — use `gh api repos/<owner>/<repo>/actions/workflows` to check actual fork workflows
 - `gh run list` may show upstream runs — filter with `--branch=main` for fork-specific results
+- `audit.yml` runs `cargo audit` daily (06:00 UTC cron) plus on `Cargo.toml`/`Cargo.lock` pushes/PRs. When it fails on a new RUSTSEC advisory, `cargo update -p <crate>` (or a transitive dep swap, e.g. bumping `serial_test` dropped its vulnerable `scc` dependency) is usually enough — no source changes needed, just a `Cargo.lock`-only PR with a changeset.
