@@ -33,7 +33,7 @@ Every PR that changes Rust source or `Cargo.toml`/`Cargo.lock` must include a ch
 Brief description of the change
 ```
 
-Use `patch` for fixes/chores, `minor` for new features, `major` for breaking changes. The CI policy check (`policy.yml`) fails without a changeset when a PR changes Rust/Cargo files.
+Use `patch` for fixes/chores, `minor` for new features, `major` for breaking changes. The CI policy check (`policy.yml`) fails without a changeset when a PR changes Rust source or the workspace root `Cargo.toml`/`Cargo.lock`.
 
 ## Architecture
 
