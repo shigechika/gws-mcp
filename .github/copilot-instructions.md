@@ -106,11 +106,15 @@ happen to not exercise the changed boundary (e.g. a test ID with no `-`/`.`/
 
 This CLI is often run non-interactively (by an MCP client or a script), so
 silent auth failures are worse than loud ones. When a diff touches `auth.rs`,
-`auth_commands.rs`, `credential_store.rs`, or `token_storage.rs`:
+`auth_commands.rs`, `credential_store.rs`, `token_storage.rs`, or the
+fork-only `mcp_http_server.rs` (which embeds its own OAuth 2.1 authorization
+server — the largest auth surface in the fork):
 
 - Keep these three concepts distinct and don't let a diff blur them:
-  `client_secret.json` (OAuth app config, no refresh token, read only by
-  `auth login`), `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` (an exported
+  `client_secret.json` (OAuth app config, no refresh token — created by
+  `auth setup`, read by `auth login` and, in this fork, **also at server
+  runtime** by `mcp_http_server.rs`'s embedded OAuth server for its token
+  exchanges), `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` (an exported
   credential *with* a refresh token, read only at API-call time — never by
   `auth login`), and `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` (switches the whole
   profile: client secret + encrypted credentials + token cache together).

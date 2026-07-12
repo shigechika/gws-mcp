@@ -13,7 +13,7 @@
 ## Build & Test
 
 > [!IMPORTANT]
-> **Test Coverage**: The `codecov/patch` check requires that new or modified lines are covered by tests. When adding code, extract testable helper functions rather than embedding logic in `main`/`run` where it's hard to unit-test. Run `cargo test` locally and verify new branches are exercised.
+> **Test Coverage**: CI runs `cargo test --workspace` (`ci.yml`) — this fork has **no** codecov/coverage gate — but new or modified lines should still be covered by tests. When adding code, extract testable helper functions rather than embedding logic in `main`/`run` where it's hard to unit-test. Run `cargo test` locally and verify new branches are exercised.
 
 ```bash
 cargo build          # Build in dev mode
@@ -23,7 +23,7 @@ cargo test           # Run tests
 
 ## Changesets
 
-Every PR must include a changeset file. Create one at `.changeset/<descriptive-name>.md`:
+Every PR that changes Rust source or the workspace root `Cargo.toml`/`Cargo.lock` must include a changeset file (the CI policy check skips this requirement for PRs that touch no Rust/Cargo files, e.g. docs-only PRs). Create one at `.changeset/<descriptive-name>.md`:
 
 ```markdown
 ---
@@ -33,7 +33,7 @@ Every PR must include a changeset file. Create one at `.changeset/<descriptive-n
 Brief description of the change
 ```
 
-Use `patch` for fixes/chores, `minor` for new features, `major` for breaking changes. The CI policy check will fail without a changeset.
+Use `patch` for fixes/chores, `minor` for new features, `major` for breaking changes. The CI policy check (`policy.yml`) fails without a changeset when a PR changes Rust source or the workspace root `Cargo.toml`/`Cargo.lock`.
 
 ## Architecture
 
@@ -74,6 +74,8 @@ The repository is a Cargo workspace with two crates:
 | `schema.rs`         | `gws schema` command — introspect API method schemas                     |
 | `logging.rs`        | Opt-in structured logging (stderr + file) via `tracing`                  |
 | `timezone.rs`       | Account timezone resolution: `--timezone` flag, Calendar Settings API    |
+| `mcp_server.rs`     | Fork-only MCP server over stdio (helper/workflow/compact tool registration + handlers) |
+| `mcp_http_server.rs` | Fork-only MCP Streamable HTTP transport + embedded OAuth 2.1 AS/RS (per-user token isolation) |
 
 ## Demo Videos
 
@@ -122,7 +124,7 @@ if let Some(output_dir) = matches.get_one::<String>("output-dir") {
 }
 ```
 
-### URL Encoding (`crates/google-workspace-cli/src/helpers/mod.rs`)
+### URL Encoding (`crates/google-workspace/src/validate.rs`, re-exported as `crate::validate::*`)
 
 User-supplied values embedded in URL **path segments** must be percent-encoded. Use the shared helper:
 
@@ -130,7 +132,7 @@ User-supplied values embedded in URL **path segments** must be percent-encoded. 
 // CORRECT — encodes slashes, spaces, and special characters
 let url = format!(
     "https://www.googleapis.com/drive/v3/files/{}",
-    crate::helpers::encode_path_segment(file_id),
+    crate::validate::encode_path_segment(file_id),
 );
 
 // WRONG — raw user input in URL path
@@ -147,7 +149,7 @@ client.get(url).query(&[("q", user_query)]).send().await?;
 let url = format!("{}?q={}", base_url, user_query);
 ```
 
-### Resource Name Validation (`crates/google-workspace-cli/src/helpers/mod.rs`)
+### Resource Name Validation (`crates/google-workspace/src/validate.rs`, re-exported as `crate::validate::*`)
 
 When a user-supplied string is used as a GCP resource identifier (project ID, topic name, space name, etc.) that gets embedded in a URL path, validate it first:
 
@@ -164,7 +166,7 @@ This prevents injection of query parameters, path traversal, or other malicious 
 When adding a new helper or CLI command:
 
 1. **File paths** → Use `validate_safe_output_dir` / `validate_safe_dir_path`
-2. **Enum flags** → Constrain via clap `value_parser` or `validate_msg_format`
+2. **Enum flags** → Constrain via clap `value_parser` (allowlist the accepted values)
 3. **URL path segments** → Use `encode_path_segment()`
 4. **Query parameters** → Use reqwest `.query()` builder
 5. **Resource names** (project IDs, space names, topic names) → Use `validate_resource_name()`
@@ -225,12 +227,18 @@ mcp_server.rs (fork-only file)
 5. **Add tests** — parameter validation, schema, and `--helpers` flag gating
 6. **Update FORK.md** tool table
 
+> [!NOTE]
+> `append_helper_tools()` is not the only tool-registration path. `mcp_server.rs` also has `append_workflow_tools()` (5 `workflow_*` tools, gated by `--workflows`) and a **compact** tool mode (`ToolMode::Compact` → `build_compact_tools_list()` plus the `gws_discover` tool). A tool added to one list can silently be missing from another — if a new helper should appear in compact mode too, update `build_compact_tools_list()` as well.
+
 ### Current MCP helper tools
 
 | Tool | Handler | Façade | Description |
 |---|---|---|---|
 | `gmail_send` | `handle_gmail_send` | None (uses `pub(crate)` helpers directly) | Send a new email |
 | `gmail_reply` | `handle_gmail_reply` | `mcp_compose_reply` | Reply within a thread |
+| `gmail_read` | `handle_gmail_read` | `mcp_read_message` | Read a message by id |
+
+Beyond these `--helpers` tools, `--workflows` registers five `workflow_*` tools (`workflow_standup_report`, `workflow_meeting_prep`, `workflow_email_to_task`, `workflow_weekly_digest`, `workflow_file_announce`) via `append_workflow_tools()`, and compact mode exposes `gws_discover`.
 
 ### Upstream merge checklist for MCP
 
