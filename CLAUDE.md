@@ -17,12 +17,13 @@ After merging upstream/main, fix MCP compilation errors:
 ### Project Structure
 
 - Cargo workspace: `crates/google-workspace-cli/` (binary) + `crates/google-workspace/` (library)
-- MCP server: `crates/google-workspace-cli/src/mcp_server.rs`
+- MCP server (stdio transport): `crates/google-workspace-cli/src/mcp_server.rs`. The fork-only **HTTP transport** — Streamable HTTP plus an embedded OAuth 2.1 authorization/resource server (per-user Google token isolation) — lives in `crates/google-workspace-cli/src/mcp_http_server.rs` and is arguably the fork's largest security surface; keep it in scope when reviewing auth/MCP changes.
 - Local install: `cargo install --path crates/google-workspace-cli`
 
 ### GitHub Actions
 
-- Fork workflows (verify with `gh api repos/<owner>/<repo>/actions/workflows`, as this list grows over time): `ci.yml`, `policy.yml`, `sync-upstream.yml`, `audit.yml`, `generate-skills.yml`, `auto-tag.yml`, `release-fork.yml`
-- `gh workflow list` may show upstream workflows — use `gh api repos/<owner>/<repo>/actions/workflows` to check actual fork workflows
+- Fork workflows (this list grows over time): `ci.yml`, `policy.yml`, `sync-upstream.yml`, `audit.yml`, `auto-tag.yml`, `release-fork.yml`
+- `gh workflow list` may show upstream workflows — use `gh api repos/<owner>/<repo>/actions/workflows` to check fork workflows, but confirm the file actually exists on the **default branch**: that API keeps reporting a workflow as "active" while its file only survives on stale side branches (this is how the deleted `generate-skills.yml` kept getting re-added to docs)
 - `gh run list` may show upstream runs — filter with `--branch=main` for fork-specific results
 - `audit.yml` runs `cargo audit` daily (06:00 UTC cron) plus on `Cargo.toml`/`Cargo.lock` pushes/PRs. When it fails on a new RUSTSEC advisory, `cargo update -p <crate>` (or a transitive dep swap, e.g. bumping `serial_test` dropped its vulnerable `scc` dependency) is usually enough — no source changes needed, just a `Cargo.lock`-only PR with a changeset.
+- `ci.yml` has a **Verify Skills** job that reruns `cargo run -- generate-skills --output-dir skills` and fails on any drift, plus a **Lint Skills** job that validates `skills/` with `agentskills`. A change to MCP tool schemas or `generate_skills.rs` must therefore commit a regenerated `skills/` directory in the same PR — CI will not auto-fix it (the `generate-skills.yml` hourly auto-sync workflow was deleted, even though the drift error still tells you an hourly PR will repair it).
