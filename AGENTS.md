@@ -23,7 +23,7 @@ cargo test           # Run tests
 
 ## Changesets
 
-Every PR that changes Rust source or `Cargo.toml`/`Cargo.lock` must include a changeset file (the CI policy check skips this requirement for PRs that touch no Rust/Cargo files, e.g. docs-only PRs). Create one at `.changeset/<descriptive-name>.md`:
+Every PR that changes Rust source or the workspace root `Cargo.toml`/`Cargo.lock` must include a changeset file (the CI policy check skips this requirement for PRs that touch no Rust/Cargo files, e.g. docs-only PRs). Create one at `.changeset/<descriptive-name>.md`:
 
 ```markdown
 ---
