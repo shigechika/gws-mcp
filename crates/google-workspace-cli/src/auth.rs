@@ -399,20 +399,31 @@ async fn load_credentials_inner(
             }
             Err(e) => {
                 // Decryption failed — the encryption key likely changed (e.g. after
-                // an upgrade that migrated keys between keyring and file storage).
-                // Remove the stale file so the next `gws auth login` starts fresh,
-                // and fall through to other credential sources (plaintext, ADC).
+                // an upgrade that migrated keys between keyring and file storage,
+                // or a Keychain/keyring backend becoming unreachable). Rename the
+                // stale file instead of deleting it, so the actual cause is
+                // visible and the file is recoverable for inspection, then fall
+                // through to other credential sources (plaintext, ADC). See
+                // upstream googleworkspace/cli#886.
+                let mut unreadable_name = enc_path
+                    .file_name()
+                    .map(|n| n.to_os_string())
+                    .unwrap_or_default();
+                unreadable_name.push(".unreadable");
+                let unreadable_path = enc_path.with_file_name(unreadable_name);
                 eprintln!(
-                    "Warning: removing undecryptable credentials file ({}): {e:#}",
-                    enc_path.display()
+                    "Warning: could not decrypt credentials file '{}': {e:#}. Renaming to '{}' — run `gws auth login` to re-authenticate.",
+                    enc_path.display(),
+                    unreadable_path.display()
                 );
-                if let Err(err) = tokio::fs::remove_file(enc_path).await {
+                if let Err(err) = tokio::fs::rename(enc_path, &unreadable_path).await {
                     eprintln!(
-                        "Warning: failed to remove stale credentials file '{}': {err}",
+                        "Warning: failed to rename stale credentials file '{}': {err}",
                         enc_path.display()
                     );
                 }
-                // Also remove stale token caches that used the old key.
+                // Token caches are re-derivable from a fresh login, so it's still
+                // safe to remove these outright rather than renaming them too.
                 for cache_file in ["token_cache.json", "sa_token_cache.json"] {
                     let path = enc_path.with_file_name(cache_file);
                     if let Err(err) = tokio::fs::remove_file(&path).await {
@@ -869,15 +880,17 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn test_load_credentials_corrupt_encrypted_file_is_removed() {
-        // When credentials.enc cannot be decrypted, the file should be removed
-        // automatically and the function should fall through to other sources.
+    async fn test_load_credentials_corrupt_encrypted_file_is_renamed() {
+        // When credentials.enc cannot be decrypted, the file should be renamed
+        // (not deleted, so the cause is inspectable — upstream #886) and the
+        // function should fall through to other sources.
         let tmp = tempfile::tempdir().unwrap();
         let _home_guard = EnvVarGuard::set("HOME", tmp.path());
         let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
 
         let dir = tempfile::tempdir().unwrap();
         let enc_path = dir.path().join("credentials.enc");
+        let unreadable_path = dir.path().join("credentials.enc.unreadable");
 
         // Write garbage data that cannot be decrypted.
         tokio::fs::write(&enc_path, b"not-valid-encrypted-data-at-all-1234567890")
@@ -897,7 +910,11 @@ mod tests {
         );
         assert!(
             !enc_path.exists(),
-            "Stale credentials.enc must be removed after decryption failure"
+            "Stale credentials.enc must not be left at its original path"
+        );
+        assert!(
+            unreadable_path.exists(),
+            "Stale credentials.enc must be renamed to credentials.enc.unreadable, not deleted"
         );
     }
 
@@ -937,7 +954,10 @@ mod tests {
             }
             _ => panic!("Expected AuthorizedUser from plaintext fallback"),
         }
-        assert!(!enc_path.exists(), "Stale credentials.enc must be removed");
+        assert!(
+            !enc_path.exists(),
+            "Stale credentials.enc must not be left at its original path"
+        );
     }
 
     #[tokio::test]
