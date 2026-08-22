@@ -108,9 +108,21 @@ pub fn get_quota_project() -> Option<String> {
         .or_else(adc_well_known_path)?;
     let content = std::fs::read_to_string(path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&content).ok()?;
-    json.get("quota_project_id")
+    let quota_project = json
+        .get("quota_project_id")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+        .map(|s| s.to_string());
+
+    if let Some(project) = &quota_project {
+        eprintln!(
+            "warning: no quota project configured for this binding (set \
+             GOOGLE_WORKSPACE_PROJECT_ID or client_secret.json's project_id); falling back to \
+             the ambient gcloud Application Default Credentials quota project '{project}', \
+             which may not match this GOOGLE_WORKSPACE_CLI_CONFIG_DIR binding (upstream #878)"
+        );
+    }
+
+    quota_project
 }
 
 /// Returns the well-known Application Default Credentials path:
