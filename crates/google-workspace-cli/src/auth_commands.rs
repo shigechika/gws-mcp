@@ -884,17 +884,31 @@ fn filter_redundant_restrictive_scopes(scopes: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// Scopes for services not covered by [`DEFAULT_SCOPES`], used only by
+/// [`gws_scopes_for_services`] (the HTTP transport's static scope derivation
+/// path — see upstream googleworkspace/cli#556). Kept out of
+/// [`MINIMAL_SCOPES`]/[`DEFAULT_SCOPES`] so the interactive `gws auth login`
+/// scope picker, which discovers scopes dynamically via Discovery documents,
+/// doesn't gain extra consent-screen entries for services most users never
+/// touch. Readonly-first, matching the narrow-by-default philosophy of
+/// [`MINIMAL_SCOPES`]; broader access is available via `--scopes`.
+const HTTP_TRANSPORT_EXTRA_SCOPES: &[&str] = &[
+    "https://www.googleapis.com/auth/contacts.readonly",
+    "https://www.googleapis.com/auth/meetings.space.created",
+];
+
 /// Return the GWS OAuth scopes needed to cover the given services.
 ///
-/// Uses [`DEFAULT_SCOPES`] as the candidate set and filters to only scopes
-/// relevant to the requested services. Always prepends the OpenID Connect
-/// identity scopes. Returns all DEFAULT_SCOPES when `services` is empty or
-/// contains the special sentinel `"all"`.
+/// Uses [`DEFAULT_SCOPES`] plus [`HTTP_TRANSPORT_EXTRA_SCOPES`] as the
+/// candidate set and filters to only scopes relevant to the requested
+/// services. Always prepends the OpenID Connect identity scopes. Returns all
+/// candidate scopes when `services` is empty or contains the special
+/// sentinel `"all"`.
 ///
-/// **Limitation**: only [`DEFAULT_SCOPES`] are considered. Services whose
-/// scopes are not in that static list (e.g. `admin`, `script`) will not have
-/// their scopes included. Dynamic scope discovery via Discovery documents is
-/// not performed here because `oauth_authorize` must redirect synchronously.
+/// **Limitation**: only the candidate set above is considered. Services
+/// whose scopes are not in it (e.g. `admin`, `script`) will not have their
+/// scopes included. Dynamic scope discovery via Discovery documents is not
+/// performed here because `oauth_authorize` must redirect synchronously.
 /// Users of such services need to ensure their Google project has the
 /// necessary APIs enabled; the access token will lack those scopes.
 pub(crate) fn gws_scopes_for_services(services: &[String]) -> Vec<String> {
@@ -905,17 +919,19 @@ pub(crate) fn gws_scopes_for_services(services: &[String]) -> Vec<String> {
     ];
     let filter: std::collections::HashSet<String> = services.iter().cloned().collect();
     // "all" is a sentinel meaning every service; treat it like an empty filter
-    // (return all DEFAULT_SCOPES). In practice the caller expands "all" before
-    // invoking this function, but guard here for correctness.
+    // (return all candidate scopes). In practice the caller expands "all"
+    // before invoking this function, but guard here for correctness.
     let filter_opt = if filter.is_empty() || filter.contains("all") {
         None
     } else {
         Some(&filter)
     };
-    let gws = filter_scopes_by_services(
-        DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
-        filter_opt,
-    );
+    let candidates: Vec<String> = DEFAULT_SCOPES
+        .iter()
+        .chain(HTTP_TRANSPORT_EXTRA_SCOPES.iter())
+        .map(|s| s.to_string())
+        .collect();
+    let gws = filter_scopes_by_services(candidates, filter_opt);
     for s in gws {
         if !scopes.contains(&s) {
             scopes.push(s);
@@ -2648,6 +2664,36 @@ mod tests {
         for s in DEFAULT_SCOPES {
             assert!(scopes.contains(&s.to_string()), "missing scope: {s}");
         }
+        // HTTP_TRANSPORT_EXTRA_SCOPES must also be present (upstream #556)
+        for s in HTTP_TRANSPORT_EXTRA_SCOPES {
+            assert!(scopes.contains(&s.to_string()), "missing extra scope: {s}");
+        }
+    }
+
+    /// Regression test for upstream googleworkspace/cli#556: `gws auth login`
+    /// (and this fork's `--auth` HTTP transport) previously never requested
+    /// People API scopes because DEFAULT_SCOPES had no `contacts*` entry —
+    /// `map_service_to_scope_prefixes` already mapped "people" to
+    /// contacts/directory, but the candidate scope list never contained any.
+    #[test]
+    fn gws_scopes_for_services_people() {
+        let scopes = gws_scopes_for_services(&["people".to_string()]);
+        assert!(scopes.contains(&"https://www.googleapis.com/auth/contacts.readonly".to_string()));
+        // Meet scope must NOT be included when only people is requested
+        assert!(
+            !scopes.contains(&"https://www.googleapis.com/auth/meetings.space.created".to_string())
+        );
+    }
+
+    /// Regression test for upstream googleworkspace/cli#556 (Meet API side).
+    #[test]
+    fn gws_scopes_for_services_meet() {
+        let scopes = gws_scopes_for_services(&["meet".to_string()]);
+        assert!(
+            scopes.contains(&"https://www.googleapis.com/auth/meetings.space.created".to_string())
+        );
+        // People scope must NOT be included when only meet is requested
+        assert!(!scopes.contains(&"https://www.googleapis.com/auth/contacts.readonly".to_string()));
     }
 
     #[test]
