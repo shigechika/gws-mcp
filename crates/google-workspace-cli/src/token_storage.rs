@@ -169,7 +169,14 @@ impl TokenStorage for EncryptedTokenStorage {
         if let Some(map) = map_lock.as_ref() {
             let key = self.cache_key(scopes);
             if let Some(token) = map.get(&key) {
-                return Some(token.clone());
+                let mut token = token.clone();
+                if token.expires_at.is_none() {
+                    // yup-oauth2's is_expired() treats a missing expires_at as "not
+                    // expired", so a legacy entry would be served forever; backdate it
+                    // to force a refresh, which repopulates a real expiry (upstream #904).
+                    token.expires_at = Some(time::OffsetDateTime::UNIX_EPOCH);
+                }
+                return Some(token);
             }
         }
 
@@ -244,5 +251,46 @@ mod tests {
             EncryptedTokenStorage::with_account(cache_path, "account-a".to_string());
         let got = account_a_again.get(&scopes).await.unwrap();
         assert_eq!(got.access_token.as_deref(), Some("token-for-a"));
+    }
+
+    #[tokio::test]
+    async fn test_get_backdates_missing_expiry_to_force_refresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_path = dir.path().join("token_cache.json");
+        let scopes = ["https://www.googleapis.com/auth/gmail.readonly"];
+
+        let storage = EncryptedTokenStorage::new(cache_path);
+        let token = TokenInfo {
+            access_token: Some("stale-access-token".to_string()),
+            refresh_token: Some("refresh-token".to_string()),
+            expires_at: None,
+            id_token: None,
+        };
+        storage.set(&scopes, token).await.unwrap();
+
+        let got = storage.get(&scopes).await.unwrap();
+        assert!(got.is_expired(), "missing expires_at must read as expired");
+        assert_eq!(got.refresh_token.as_deref(), Some("refresh-token"));
+    }
+
+    #[tokio::test]
+    async fn test_get_preserves_real_expiry() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_path = dir.path().join("token_cache.json");
+        let scopes = ["https://www.googleapis.com/auth/gmail.readonly"];
+
+        let future = time::OffsetDateTime::now_utc() + time::Duration::HOUR;
+        let storage = EncryptedTokenStorage::new(cache_path);
+        let token = TokenInfo {
+            access_token: Some("fresh-access-token".to_string()),
+            refresh_token: Some("refresh-token".to_string()),
+            expires_at: Some(future),
+            id_token: None,
+        };
+        storage.set(&scopes, token.clone()).await.unwrap();
+
+        let got = storage.get(&scopes).await.unwrap();
+        assert_eq!(got, token);
+        assert!(!got.is_expired());
     }
 }
