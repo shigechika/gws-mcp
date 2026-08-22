@@ -399,20 +399,42 @@ async fn load_credentials_inner(
             }
             Err(e) => {
                 // Decryption failed — the encryption key likely changed (e.g. after
-                // an upgrade that migrated keys between keyring and file storage).
-                // Remove the stale file so the next `gws auth login` starts fresh,
-                // and fall through to other credential sources (plaintext, ADC).
-                eprintln!(
-                    "Warning: removing undecryptable credentials file ({}): {e:#}",
-                    enc_path.display()
-                );
-                if let Err(err) = tokio::fs::remove_file(enc_path).await {
-                    eprintln!(
-                        "Warning: failed to remove stale credentials file '{}': {err}",
-                        enc_path.display()
-                    );
+                // an upgrade that migrated keys between keyring and file storage,
+                // or a Keychain/keyring backend becoming unreachable). Rename the
+                // stale file instead of deleting it, so the actual cause is
+                // visible and the file is recoverable for inspection, then fall
+                // through to other credential sources (plaintext, ADC). See
+                // upstream googleworkspace/cli#886.
+                //
+                // The rename target includes a Unix timestamp so a second
+                // decrypt failure doesn't silently clobber the first
+                // failure's preserved file — plain `rename(2)` (and Windows'
+                // MoveFileExW with MOVEFILE_REPLACE_EXISTING) overwrite an
+                // existing destination without warning.
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                let mut unreadable_name = enc_path
+                    .file_name()
+                    .map(|n| n.to_os_string())
+                    .unwrap_or_default();
+                unreadable_name.push(format!(".unreadable.{timestamp}"));
+                let unreadable_path = enc_path.with_file_name(unreadable_name);
+                match tokio::fs::rename(enc_path, &unreadable_path).await {
+                    Ok(()) => eprintln!(
+                        "Warning: could not decrypt credentials file '{}': {e:#}. Renamed to '{}' — run `gws auth login` to re-authenticate.",
+                        enc_path.display(),
+                        unreadable_path.display()
+                    ),
+                    Err(err) => eprintln!(
+                        "Warning: could not decrypt credentials file '{}': {e:#}. Also failed to rename it to '{}': {err}. The file remains at its original path — run `gws auth login` to overwrite it, or remove it manually.",
+                        enc_path.display(),
+                        unreadable_path.display()
+                    ),
                 }
-                // Also remove stale token caches that used the old key.
+                // Token caches are re-derivable from a fresh login, so it's still
+                // safe to remove these outright rather than renaming them too.
                 for cache_file in ["token_cache.json", "sa_token_cache.json"] {
                     let path = enc_path.with_file_name(cache_file);
                     if let Err(err) = tokio::fs::remove_file(&path).await {
@@ -521,6 +543,22 @@ mod tests {
         PROXY_ENV_VARS
             .iter()
             .map(|key| EnvVarGuard::remove(key))
+            .collect()
+    }
+
+    /// List `credentials.enc.unreadable.<timestamp>` files in `dir`, used to
+    /// verify renamed-not-deleted behavior without depending on the exact
+    /// timestamp value.
+    fn find_unreadable_files(dir: &std::path::Path) -> Vec<PathBuf> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("credentials.enc.unreadable."))
+            })
             .collect()
     }
 
@@ -869,9 +907,10 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn test_load_credentials_corrupt_encrypted_file_is_removed() {
-        // When credentials.enc cannot be decrypted, the file should be removed
-        // automatically and the function should fall through to other sources.
+    async fn test_load_credentials_corrupt_encrypted_file_is_renamed() {
+        // When credentials.enc cannot be decrypted, the file should be renamed
+        // (not deleted, so the cause is inspectable — upstream #886) and the
+        // function should fall through to other sources.
         let tmp = tempfile::tempdir().unwrap();
         let _home_guard = EnvVarGuard::set("HOME", tmp.path());
         let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
@@ -897,7 +936,51 @@ mod tests {
         );
         assert!(
             !enc_path.exists(),
-            "Stale credentials.enc must be removed after decryption failure"
+            "Stale credentials.enc must not be left at its original path"
+        );
+        let renamed = find_unreadable_files(dir.path());
+        assert_eq!(
+            renamed.len(),
+            1,
+            "Stale credentials.enc must be renamed to a single credentials.enc.unreadable.<timestamp> file, not deleted: {renamed:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_load_credentials_corrupt_encrypted_file_rename_does_not_clobber_prior_failure() {
+        // A second decrypt failure must not silently overwrite a still-unrecovered
+        // .unreadable file from an earlier failure — each gets its own timestamped
+        // name (upstream #886 follow-up).
+        let tmp = tempfile::tempdir().unwrap();
+        let _home_guard = EnvVarGuard::set("HOME", tmp.path());
+        let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
+
+        let dir = tempfile::tempdir().unwrap();
+        let enc_path = dir.path().join("credentials.enc");
+
+        tokio::fs::write(&enc_path, b"not-valid-encrypted-data-at-all-1234567890")
+            .await
+            .unwrap();
+        load_credentials_inner(None, &enc_path, &PathBuf::from("/does/not/exist"))
+            .await
+            .unwrap_err();
+        assert_eq!(find_unreadable_files(dir.path()).len(), 1);
+
+        // Simulate a fresh login writing a new credentials.enc, which then also
+        // fails to decrypt.
+        tokio::fs::write(&enc_path, b"different-garbage-data-1234567890")
+            .await
+            .unwrap();
+        load_credentials_inner(None, &enc_path, &PathBuf::from("/does/not/exist"))
+            .await
+            .unwrap_err();
+
+        let renamed = find_unreadable_files(dir.path());
+        assert_eq!(
+            renamed.len(),
+            2,
+            "Both failures' credentials.enc.unreadable.<timestamp> files must be preserved, not clobbered: {renamed:?}"
         );
     }
 
@@ -937,7 +1020,10 @@ mod tests {
             }
             _ => panic!("Expected AuthorizedUser from plaintext fallback"),
         }
-        assert!(!enc_path.exists(), "Stale credentials.enc must be removed");
+        assert!(
+            !enc_path.exists(),
+            "Stale credentials.enc must not be left at its original path"
+        );
     }
 
     #[tokio::test]
