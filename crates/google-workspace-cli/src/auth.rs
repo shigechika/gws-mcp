@@ -85,7 +85,8 @@ async fn refresh_token_with_reqwest(
 /// Priority:
 /// 1. `GOOGLE_WORKSPACE_PROJECT_ID` environment variable.
 /// 2. `project_id` from the OAuth client configuration (`client_secret.json`).
-/// 3. `quota_project_id` from Application Default Credentials (ADC).
+/// 3. `quota_project_id` from Application Default Credentials (ADC). The first time this
+///    fallback is used, a warning naming the source is printed to stderr (once per process).
 pub fn get_quota_project() -> Option<String> {
     // 1. Explicit environment variable (highest priority)
     if let Ok(project_id) = std::env::var("GOOGLE_WORKSPACE_PROJECT_ID") {
@@ -102,10 +103,13 @@ pub fn get_quota_project() -> Option<String> {
     }
 
     // 3. Fallback to Application Default Credentials (ADC)
-    let path = std::env::var("GOOGLE_APPLICATION_CREDENTIALS")
-        .ok()
-        .map(PathBuf::from)
-        .or_else(adc_well_known_path)?;
+    let (path, source) = match std::env::var("GOOGLE_APPLICATION_CREDENTIALS") {
+        Ok(env_path) => (PathBuf::from(env_path), "GOOGLE_APPLICATION_CREDENTIALS"),
+        Err(_) => (
+            adc_well_known_path()?,
+            "the ambient gcloud ADC file (~/.config/gcloud/application_default_credentials.json)",
+        ),
+    };
     let content = std::fs::read_to_string(path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&content).ok()?;
     let quota_project = json
@@ -114,12 +118,17 @@ pub fn get_quota_project() -> Option<String> {
         .map(|s| s.to_string());
 
     if let Some(project) = &quota_project {
-        eprintln!(
-            "warning: no quota project configured for this binding (set \
-             GOOGLE_WORKSPACE_PROJECT_ID or client_secret.json's project_id); falling back to \
-             the ambient gcloud Application Default Credentials quota project '{project}', \
-             which may not match this GOOGLE_WORKSPACE_CLI_CONFIG_DIR binding (upstream #878)"
-        );
+        // Printed once per process (not once per request) since get_quota_project() is
+        // called on every outgoing HTTP request, including from inside pagination loops.
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| {
+            eprintln!(
+                "warning: no quota project configured for this binding (set \
+                 GOOGLE_WORKSPACE_PROJECT_ID or client_secret.json's project_id); falling back \
+                 to quota project '{project}' from {source}, which may not match this \
+                 GOOGLE_WORKSPACE_CLI_CONFIG_DIR binding (upstream #878)"
+            );
+        });
     }
 
     quota_project
