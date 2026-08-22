@@ -115,9 +115,15 @@ pub fn load_client_config() -> anyhow::Result<InstalledConfig> {
         .map_err(|e| anyhow::anyhow!("Cannot read {}: {e}", path.display()))?;
     let file: ClientSecretFile = serde_json::from_str(&data)
         .map_err(|e| anyhow::anyhow!("Invalid client_secret.json format: {e}"))?;
-    file.installed.or(file.web).ok_or_else(|| {
+    let mut config = file.installed.or(file.web).ok_or_else(|| {
         anyhow::anyhow!("client_secret.json must contain an 'installed' or 'web' key (got neither)")
-    })
+    })?;
+    // Trim whitespace that may have survived from a setup run predating the
+    // input-side trim, or a hand-edited file. See upstream
+    // googleworkspace/cli#882.
+    config.client_id = config.client_id.trim().to_string();
+    config.client_secret = config.client_secret.trim().to_string();
+    Ok(config)
 }
 
 #[cfg(test)]
@@ -338,5 +344,31 @@ mod tests {
         assert!(err
             .to_string()
             .contains("Invalid client_secret.json format"));
+    }
+
+    /// Regression test for upstream googleworkspace/cli#882: a Client ID
+    /// with stray whitespace (e.g. a trailing space picked up from a
+    /// copy-paste, or persisted from a setup run predating the input-side
+    /// trim) must be trimmed on load so it never reaches the OAuth
+    /// authorization URL.
+    #[test]
+    #[serial_test::serial]
+    fn test_load_client_config_trims_whitespace() {
+        let dir = tempfile::tempdir().unwrap();
+        let _env_guard = EnvGuard::new(
+            "GOOGLE_WORKSPACE_CLI_CONFIG_DIR",
+            dir.path().to_str().unwrap(),
+        );
+
+        save_client_config(
+            "  test-id.apps.googleusercontent.com \n",
+            " GOCSPX-test\t",
+            "test-project",
+        )
+        .unwrap();
+
+        let config = load_client_config().unwrap();
+        assert_eq!(config.client_id, "test-id.apps.googleusercontent.com");
+        assert_eq!(config.client_secret, "GOCSPX-test");
     }
 }

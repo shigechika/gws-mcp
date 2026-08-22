@@ -268,9 +268,9 @@ GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=~/.config/gws-work/client_secret.json gws 
 > GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/.config/gws-work GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file gws auth login
 > ```
 
-## このフォークで対応した upstream の MCP issue
+## このフォークで対応した upstream issue
 
-upstream の MCP サーバーに対するバグ報告・機能要望（MCP 削除に伴い close されたもの）を、このフォークで移植・対応しています。
+upstream に対するバグ報告・機能要望を移植・独自対応しています。一部は MCP サーバー（削除前）に対するもの、一部は CLI/認証まわりの共有コードでこのフォークが独自に分岐している箇所です。
 
 | upstream issue | 状態 | 内容 |
 |---|---|---|
@@ -287,6 +287,7 @@ upstream の MCP サーバーに対するバグ報告・機能要望（MCP 削�
 | [#556](https://github.com/googleworkspace/cli/issues/556) — `gws auth login` が People/Meet の OAuth スコープを一切提示しない | 対応済（HTTP transport） | 対話 CLI の scope picker は Discovery ドキュメント経由で動的にスコープを発見するため問題なし。フォークの `--auth` HTTP transport はスコープを `gws_scopes_for_services` で静的導出しており、`people`/`meet` のマッピング（`map_service_to_scope_prefixes`）自体は存在するのに、照合対象となる候補スコープが1件も無かった。この関数専用の候補セット `HTTP_TRANSPORT_EXTRA_SCOPES`（`contacts.readonly`, `meetings.space.created`）を追加し、`MINIMAL_SCOPES`/`DEFAULT_SCOPES`（＝CLI 自体のデフォルト login）には影響を与えないようにした |
 | [#644](https://github.com/googleworkspace/cli/issues/644) — `gmail +send` が `userinfo.profile` スコープを付与済みでも「grant profile scope」ヒントを出し、From の表示名が null になる | 対応済 | `helpers/gmail/mod.rs` の表示名取得を People API (`/people/me?personFields=names`) から OIDC userinfo endpoint (`openidconnect.googleapis.com/v1/userinfo`) に変更。同じスコープで Workspace / 個人 Gmail どちらでも一貫したレスポンスが得られる。401/403 時のフォールバックメッセージも、一時的な拒否をスコープ欠落と誤診断しない表現に改訂 |
 | [#886](https://github.com/googleworkspace/cli/issues/886) — 復号失敗時に credentials file がエラー説明なしでサイレント削除される | 対応済 | `credentials.enc` の復号に失敗した場合（keyring/暗号化キーの変更後等）、削除ではなく `credentials.enc.unreadable.<timestamp>` へのリネームに変更し、実際の復号エラーとリネーム結果を表示するようにした。タイムスタンプを付与することで、後発の失敗が先発の失敗で保存したファイルを上書きしてしまうことを防ぐ。トークンキャッシュ（`token_cache.json`, `sa_token_cache.json`）は再ログインで再導出可能なため引き続き削除する |
+| [#882](https://github.com/googleworkspace/cli/issues/882) — `gws auth setup` で貼り付けた OAuth Client ID/Secret が trim されず、login 時に 401 invalid_client になる | 対応済 | セットアップウィザード入力時（`setup.rs`、空白のみの入力も拒否するよう変更）と `load_client_config()`（`oauth_config.rs`）読み込み時の両方で trim。修正前に保存されてしまった値も、セットアップをやり直さずに次回 `gws auth login` で自動的に直る |
 
 ## upstream MCP 定点観測
 
