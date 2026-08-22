@@ -287,7 +287,7 @@ pub(crate) async fn build_tools_list(config: &ServerConfig) -> Result<Vec<Value>
 
     for svc_name in &config.services {
         let (api_name, version) =
-            crate::parse_service_and_version(&[svc_name.to_string()], svc_name)?;
+            crate::parse_service_and_version(std::slice::from_ref(svc_name), svc_name)?;
         if let Ok(doc) = crate::discovery::fetch_discovery_document(&api_name, &version).await {
             walk_resources(svc_name, &doc.resources, &mut tools);
         } else {
@@ -311,7 +311,7 @@ async fn build_compact_tools_list(config: &ServerConfig) -> Result<Vec<Value>, G
 
     for svc_name in &config.services {
         let (api_name, version) =
-            crate::parse_service_and_version(&[svc_name.to_string()], svc_name)?;
+            crate::parse_service_and_version(std::slice::from_ref(svc_name), svc_name)?;
 
         let description = if let Ok(doc) =
             crate::discovery::fetch_discovery_document(&api_name, &version).await
