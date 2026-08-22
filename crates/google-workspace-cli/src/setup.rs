@@ -1539,6 +1539,12 @@ async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, Gws
 
     ctx.client_id = match cid_result {
         crate::setup_tui::InputResult::Confirmed(v) => {
+            // Trim whitespace picked up from copy-paste (e.g. a trailing
+            // space from the Cloud Console credentials page) — an
+            // untrimmed Client ID produces a misleading 401 invalid_client
+            // at login instead of a validation error here. See upstream
+            // googleworkspace/cli#882.
+            let v = v.trim().to_string();
             if v.is_empty() {
                 ctx.finish_wizard();
                 return Err(GwsError::Validation("Client ID cannot be empty".into()));
@@ -1556,6 +1562,7 @@ async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, Gws
 
     ctx.client_secret = match csecret_result {
         crate::setup_tui::InputResult::Confirmed(v) => {
+            let v = v.trim().to_string();
             if v.is_empty() {
                 ctx.finish_wizard();
                 return Err(GwsError::Validation("Client Secret cannot be empty".into()));
