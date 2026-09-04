@@ -169,6 +169,9 @@ impl TokenStorage for EncryptedTokenStorage {
         if let Some(map) = map_lock.as_ref() {
             let key = self.cache_key(scopes);
             if let Some(token) = map.get(&key) {
+                // An unknown expiry is not safe to treat as valid: otherwise
+                // a dead access token can be reused indefinitely.
+                token.expires_at.as_ref()?;
                 return Some(token.clone());
             }
         }
@@ -238,11 +241,33 @@ mod tests {
             EncryptedTokenStorage::with_account(cache_path.clone(), "account-b".to_string());
         assert!(account_b.get(&scopes).await.is_none());
 
-        // The same account still reads its own token back (new instance to
-        // force a fresh disk load rather than reusing the in-memory cache).
+        // The same account finds its own entry, but the unknown expiry is
+        // deliberately treated as a cache miss.
         let account_a_again =
             EncryptedTokenStorage::with_account(cache_path, "account-a".to_string());
-        let got = account_a_again.get(&scopes).await.unwrap();
-        assert_eq!(got.access_token.as_deref(), Some("token-for-a"));
+        assert!(account_a_again.get(&scopes).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_token_without_expiry_is_treated_as_cache_miss() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_path = dir.path().join("token_cache.json");
+        let scopes = ["https://www.googleapis.com/auth/gmail.readonly"];
+        let storage = EncryptedTokenStorage::with_account(cache_path, "account".to_string());
+
+        storage
+            .set(
+                &scopes,
+                TokenInfo {
+                    access_token: Some("unbounded-token".to_string()),
+                    refresh_token: Some("refresh-token".to_string()),
+                    expires_at: None,
+                    id_token: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(storage.get(&scopes).await.is_none());
     }
 }

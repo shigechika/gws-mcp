@@ -400,30 +400,16 @@ async fn load_credentials_inner(
             Err(e) => {
                 // Decryption failed — the encryption key likely changed (e.g. after
                 // an upgrade that migrated keys between keyring and file storage).
-                // Remove the stale file so the next `gws auth login` starts fresh,
-                // and fall through to other credential sources (plaintext, ADC).
+                // Preserve the file: it may still be recoverable with the
+                // original keyring/backend. Fall through to other credential
+                // sources without destroying user data.
                 eprintln!(
-                    "Warning: removing undecryptable credentials file ({}): {e:#}",
+                    "Warning: unable to decrypt credentials file ({}): {e:#}",
                     enc_path.display()
                 );
-                if let Err(err) = tokio::fs::remove_file(enc_path).await {
-                    eprintln!(
-                        "Warning: failed to remove stale credentials file '{}': {err}",
-                        enc_path.display()
-                    );
-                }
-                // Also remove stale token caches that used the old key.
-                for cache_file in ["token_cache.json", "sa_token_cache.json"] {
-                    let path = enc_path.with_file_name(cache_file);
-                    if let Err(err) = tokio::fs::remove_file(&path).await {
-                        if err.kind() != std::io::ErrorKind::NotFound {
-                            eprintln!(
-                                "Warning: failed to remove stale token cache '{}': {err}",
-                                path.display()
-                            );
-                        }
-                    }
-                }
+                eprintln!(
+                    "Hint: check GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND or run `gws auth login`."
+                );
                 // Fall through to remaining credential sources below.
             }
         }
@@ -869,9 +855,9 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn test_load_credentials_corrupt_encrypted_file_is_removed() {
-        // When credentials.enc cannot be decrypted, the file should be removed
-        // automatically and the function should fall through to other sources.
+    async fn test_load_credentials_corrupt_encrypted_file_is_preserved() {
+        // When credentials.enc cannot be decrypted, preserve it and fall
+        // through to other sources.
         let tmp = tempfile::tempdir().unwrap();
         let _home_guard = EnvVarGuard::set("HOME", tmp.path());
         let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
@@ -895,10 +881,7 @@ mod tests {
             msg.contains("No credentials found"),
             "Should fall through to final error, got: {msg}"
         );
-        assert!(
-            !enc_path.exists(),
-            "Stale credentials.enc must be removed after decryption failure"
-        );
+        assert!(enc_path.exists(), "credentials.enc must not be deleted");
     }
 
     #[tokio::test]
@@ -937,7 +920,7 @@ mod tests {
             }
             _ => panic!("Expected AuthorizedUser from plaintext fallback"),
         }
-        assert!(!enc_path.exists(), "Stale credentials.enc must be removed");
+        assert!(enc_path.exists(), "credentials.enc must be preserved");
     }
 
     #[tokio::test]

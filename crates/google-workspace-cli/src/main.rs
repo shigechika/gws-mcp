@@ -263,6 +263,7 @@ async fn run() -> Result<(), GwsError> {
     };
 
     let dry_run = matched_args.get_flag("dry-run");
+    let validate_body = !matched_args.get_flag("no-validate");
 
     // Build pagination config from flags
     let pagination = parse_pagination_config(matched_args);
@@ -290,7 +291,7 @@ async fn run() -> Result<(), GwsError> {
     };
 
     // Execute
-    executor::execute_method(
+    executor::execute_method_with_validation(
         &doc,
         method,
         params_json,
@@ -300,6 +301,7 @@ async fn run() -> Result<(), GwsError> {
         output_path,
         upload,
         dry_run,
+        validate_body,
         &pagination,
         sanitize_config.template.as_deref(),
         &sanitize_config.mode,
