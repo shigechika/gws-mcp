@@ -72,3 +72,12 @@ If unsure about parameters or body structure, check the schema:
 gws schema drive.files.list
 gws schema sheets.spreadsheets.create
 ```
+
+## Fork Maintenance Memory (2026-09-04)
+
+- This fork is `shigechika/gws-mcp`; MCP changes belong here, not in upstream `googleworkspace/cli`.
+- Upstream-removed MCP support remains maintained here, including stdio/HTTP transports and the Gmail helpers `gmail_send`, `gmail_reply`, and `gmail_read`.
+- PR [#61](https://github.com/shigechika/gws-mcp/pull/61) adds three CLI hardening fixes: preserve `credentials.enc` after decryption failure, treat token-cache entries without `expires_at` as cache misses, and add CLI-only `--no-validate` for request fields absent from Discovery schemas. MCP and helper execution keep validation enabled.
+- The fork already protects the upstream #562 scope-picker regression by not auto-injecting `cloud-platform`, invalidates the token cache after login, and namespaces token-cache entries by account. Preserve these during upstream sync.
+- Upstream issues #876, #886, and #904 are especially relevant to this fork's authentication behavior; do not blindly replace the local auth implementation during sync.
+- PR #61 verification: targeted regression tests pass; the full CLI suite had 779 passing tests and two sandbox-only temporary-file permission failures in watch/subscribe tests. Clippy remains blocked by two pre-existing `mcp_server.rs` warnings.
