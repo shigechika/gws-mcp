@@ -70,7 +70,7 @@ uuid = { version = "1.22.0", features = ["v4", "v5"] }
 mime_guess2 = "2.3.1"
 axum = "0.8"
 http = "1"
-rmcp = { version = "1", features = ["transport-streamable-http-server", "server"] }
+rmcp = { version = "2", features = ["transport-streamable-http-server", "server"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6.3", features = ["apple-native"] }
