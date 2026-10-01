@@ -98,6 +98,7 @@ fn parse_and_validate_inputs(
     params_json: Option<&str>,
     body_json: Option<&str>,
     is_media_upload: bool,
+    validate_body: bool,
 ) -> Result<ExecutionInput, GwsError> {
     let params: Map<String, Value> = if let Some(p) = params_json {
         serde_json::from_str(p)
@@ -110,9 +111,11 @@ fn parse_and_validate_inputs(
         let val: Value = serde_json::from_str(b)
             .map_err(|e| GwsError::Validation(format!("Invalid --json body: {e}")))?;
 
-        if let Some(ref req_ref) = method.request {
-            if let Some(ref schema_name) = req_ref.schema_ref {
-                validate_body_against_schema(&val, schema_name, doc)?;
+        if validate_body {
+            if let Some(ref req_ref) = method.request {
+                if let Some(ref schema_name) = req_ref.schema_ref {
+                    validate_body_against_schema(&val, schema_name, doc)?;
+                }
             }
         }
 
@@ -411,7 +414,52 @@ pub async fn execute_method(
     output_format: &crate::formatter::OutputFormat,
     capture_output: bool,
 ) -> Result<Option<Value>, GwsError> {
-    let input = parse_and_validate_inputs(doc, method, params_json, body_json, upload.is_some())?;
+    execute_method_with_validation(
+        doc,
+        method,
+        params_json,
+        body_json,
+        token,
+        auth_method,
+        output_path,
+        upload,
+        dry_run,
+        true,
+        pagination,
+        sanitize_template,
+        sanitize_mode,
+        output_format,
+        capture_output,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_method_with_validation(
+    doc: &RestDescription,
+    method: &RestMethod,
+    params_json: Option<&str>,
+    body_json: Option<&str>,
+    token: Option<&str>,
+    auth_method: AuthMethod,
+    output_path: Option<&str>,
+    upload: Option<UploadSource<'_>>,
+    dry_run: bool,
+    validate_body: bool,
+    pagination: &PaginationConfig,
+    sanitize_template: Option<&str>,
+    sanitize_mode: &crate::helpers::modelarmor::SanitizeMode,
+    output_format: &crate::formatter::OutputFormat,
+    capture_output: bool,
+) -> Result<Option<Value>, GwsError> {
+    let input = parse_and_validate_inputs(
+        doc,
+        method,
+        params_json,
+        body_json,
+        upload.is_some(),
+        validate_body,
+    )?;
 
     if dry_run {
         let dry_run_info = json!({
@@ -1254,6 +1302,31 @@ mod tests {
 
         let body = json!({ "name": "My File" });
         assert!(validate_body_against_schema(&body, "File", &doc).is_ok());
+    }
+
+    #[test]
+    fn test_no_validate_allows_discovery_unknown_fields() {
+        let doc = RestDescription::default();
+        let method = RestMethod {
+            http_method: "POST".to_string(),
+            path: "files".to_string(),
+            request: Some(crate::discovery::SchemaRef {
+                schema_ref: Some("File".to_string()),
+                parameter_name: None,
+            }),
+            ..Default::default()
+        };
+
+        let result = parse_and_validate_inputs(
+            &doc,
+            &method,
+            None,
+            Some(r#"{"previewField":"accepted"}"#),
+            false,
+            false,
+        );
+
+        assert!(result.is_ok());
     }
 
     #[test]
