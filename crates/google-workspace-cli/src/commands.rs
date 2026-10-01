@@ -41,6 +41,13 @@ pub fn build_cli(doc: &RestDescription) -> Command {
                 .global(true),
         )
         .arg(
+            clap::Arg::new("no-validate")
+                .long("no-validate")
+                .help("Skip local request-body validation against the Discovery schema")
+                .action(clap::ArgAction::SetTrue)
+                .global(true),
+        )
+        .arg(
             clap::Arg::new("format")
                 .long("format")
                 .help("Output format: json (default), table, yaml, csv")
@@ -277,6 +284,15 @@ mod tests {
         assert!(
             sanitize_arg.is_some(),
             "--sanitize arg should be present on root command"
+        );
+    }
+
+    #[test]
+    fn test_no_validate_arg_present() {
+        let cmd = build_cli(&make_doc());
+        assert!(
+            cmd.get_arguments().any(|arg| arg.get_id() == "no-validate"),
+            "--no-validate arg should be present on root command"
         );
     }
 }
